@@ -36,10 +36,19 @@ public sealed record Finding(string Title, string Level, string Confidence, stri
 
 public sealed record ProcessReading(string Name, int Pid, string? StartUtc, double? AverageCpuPercent,
     double? PeakCpuPercent, double? CpuSeconds, double? PrivateMiB, double? WorkingSetMiB, string? Path,
-    string Application = "Unattributed", string OwnershipEvidence = "No verified ownership metadata", string? InstanceKey = null);
+    string Application = "Unattributed", string OwnershipEvidence = "No verified ownership metadata", string? InstanceKey = null,
+    string IdentityStatus = "Legacy identity", string AttributionCategory = "Legacy attribution unavailable",
+    string AttributionConfidence = "Unavailable", string MetadataAccess = "Unavailable", int? ParentPid = null,
+    string? Services = null, string? PackageDirectory = null, int? Observations = null);
 
 public sealed record ApplicationReading(string Name, string Key, double? PrivateMiB, double? WorkingSetMiB,
-    int PrivateSamples, int WorkingSetSamples, IReadOnlyList<ProcessReading> Processes);
+    int PrivateSamples, int WorkingSetSamples, IReadOnlyList<ProcessReading> Processes,
+    double? AverageCpu = null, double? PeakCpu = null, int? UniqueIdentities = null, int? Observations = null,
+    int? PeakConcurrent = null, string Confidence = "Unavailable", string Category = "Legacy category unavailable");
+
+public sealed record AttributionQuality(int UniqueIdentities, int UniquePids, int Verified, int Provisional,
+    int Identified, int WindowsSystem, int Restricted, int Unattributed, int Unknown, int Observations,
+    int PeakConcurrent, double? AttributedPercent, double? UnattributedPrivateMiB, int RestrictedOwnership = 0);
 
 public sealed record SamplingQuality(int Expected, int Actual, int ValidCpu, int Missed, double DurationSeconds,
     IReadOnlyList<string> Errors, double? AverageWorkSeconds, double? PeakWorkSeconds);
@@ -47,7 +56,7 @@ public sealed record SamplingQuality(int Expected, int Actual, int ValidCpu, int
 public sealed record DiagnosticReport(string Schema, string Computer, DateTimeOffset Started, string Assessment,
     bool Incomplete, IReadOnlyList<string> CoverageGaps, IReadOnlyList<Sample> Samples, IReadOnlyList<Finding> Findings,
     IReadOnlyList<ProcessReading> Processes, SamplingQuality Quality, string JsonPath, string? HtmlPath,
-    IReadOnlyList<ApplicationReading>? Applications = null);
+    IReadOnlyList<ApplicationReading>? Applications = null, AttributionQuality? Attribution = null);
 
 public sealed record EngineProgress(string Phase, Sample? Sample = null, int Collected = 0, int Expected = 0);
 
@@ -67,8 +76,8 @@ public static class DiagnosticData
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
         var root = document.RootElement;
         var schema = RequiredText(root, "SchemaVersion");
-        if (schema is not ("0.1" or "0.2"))
-            throw new InvalidDataException($"WPBD report schema {schema} is unsupported. Use a schema 0.1 or 0.2 report.");
+        if (schema is not ("0.1" or "0.2" or "0.3"))
+            throw new InvalidDataException($"WPBD report schema {schema} is unsupported. Use a schema 0.1, 0.2 or 0.3 report.");
 
         var assessment = root.Field("Assessment");
         var category = RequiredText(assessment, "Category");
@@ -94,7 +103,7 @@ public static class DiagnosticData
             Timestamp(root, "StartedUtc"), RequiredText(assessment, "Summary"),
             category == "Insufficient diagnostic data" || gaps.Length > 0 || actual == 0, gaps, samples, findings,
             ParseAllProcesses(root), settings, path,
-            File.Exists(html) ? html : null, ParseApplications(root));
+            File.Exists(html) ? html : null, ParseApplications(root), ParseAttribution(root));
     }
 
     public static EngineEvent ParseEvent(string line)
@@ -205,7 +214,12 @@ public static class DiagnosticData
         item.Int("Id") ?? 0, item.Text("StartUtc"), item.Number("AverageCpuPercent"), item.Number("PeakCpuPercent"),
         item.Number("CumulativeCpuSeconds"), item.Number("PeakPrivateBytes") / 1048576,
         item.Number("PeakWorkingSetBytes") / 1048576, item.Text("Path"), item.Text("Application") ?? "Unattributed",
-        item.Text("OwnershipEvidence") ?? "No verified ownership metadata", item.Text("InstanceKey"));
+        item.Text("OwnershipEvidence") ?? "No verified ownership metadata", item.Text("InstanceKey"),
+        item.Text("IdentityStatus") ?? (item.Text("StartUtc") is { Length: > 0 } ? "Verified (legacy)" : "Legacy unverified sighting"),
+        item.Text("AttributionCategory") ?? "Legacy attribution unavailable",
+        item.Text("AttributionConfidence") ?? "Unavailable", item.Text("MetadataAccess") ?? "Unavailable",
+        item.Int("ParentId"), string.Join(", ", item.Field("Services").Items().Select(service => service.GetString())),
+        item.Text("PackageDirectory"), item.Int("Observations"));
 
     private static IReadOnlyList<ProcessReading> ParseAllProcesses(JsonElement root)
     {
@@ -239,7 +253,25 @@ public static class DiagnosticData
             item.Field("PrivateBytes").Number("Maximum") / 1048576,
             item.Field("WorkingSetBytes").Number("Maximum") / 1048576,
             item.Field("PrivateBytes").Int("Count") ?? 0, item.Field("WorkingSetBytes").Int("Count") ?? 0,
-            item.Field("Processes").Items().Select(ParseProcess).ToArray())).ToArray();
+            item.Field("Processes").Items().Select(ParseProcess).ToArray(),
+            item.Field("CpuPercent").Number("Average"), item.Field("CpuPercent").Number("Maximum"),
+            item.Int("UniqueIdentities"), item.Int("Observations"), item.Field("ConcurrentProcesses").Int("Maximum")
+                ?? (int?)item.Field("ConcurrentProcesses").Number("Maximum"),
+            item.Text("AttributionConfidence") ?? "Unavailable", item.Text("AttributionCategory") ?? "Legacy category unavailable")).ToArray();
+
+    private static AttributionQuality? ParseAttribution(JsonElement root)
+    {
+        var quality = root.Field("AttributionQuality");
+        if (quality.ValueKind != JsonValueKind.Object) return null;
+        return new AttributionQuality(quality.Int("UniqueIdentities") ?? 0, quality.Int("UniquePids") ?? 0,
+            quality.Int("VerifiedIdentities") ?? 0, quality.Int("ProvisionalIdentities") ?? 0,
+            quality.Int("IdentifiedApplications") ?? 0, quality.Int("WindowsSystemProcesses") ?? 0,
+            quality.Int("RestrictedProcesses") ?? 0, quality.Int("UnattributedApplications") ?? 0,
+            quality.Int("UnknownOwnership") ?? 0,
+            quality.Int("Observations") ?? 0, (int)(quality.Field("ConcurrentProcesses").Number("Maximum") ?? 0),
+            quality.Number("AttributedPercent"), quality.Field("UnattributedPrivateBytes").Number("Maximum") / 1048576,
+            quality.Int("RestrictedOwnership") ?? 0);
+    }
 
     private static string RequiredText(JsonElement source, string key) =>
         source.Text(key) is { Length: > 0 } value ? value : throw new InvalidDataException($"Missing report or event field '{key}'.");

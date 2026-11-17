@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- Corrected per-slot identity inflation for inaccessible process start times by tracking explicitly provisional consecutive PID/name observations.
+- Added independent ownership categories, identity status and metadata-access evidence, plus service names and parent metadata outside timed sampling.
+- Added attribution quality, same-sample unattributed memory, group CPU and distinct identity/observation/concurrent counts to JSON schema 0.3 and HTML.
+- Added category filters, searchable service names, application ordering and expanded process evidence in the existing desktop views.
+- Preserved readers for schemas 0.1 and 0.2 without reclassifying historical ownership. Existing diagnostic thresholds are retained.
+- Updated tests that intentionally expected one identity per missing-start-time sighting to require provisional continuity. Updated the report serialization assertion for schema 0.3 and legacy Unattributed assertions for the more informative categories. Added gap, reuse, restricted metadata, service/type, CPU and count regressions.
+
 ## 0.4.2
 
 - Added All Processes browsing, search and attribution filters, plus expandable Applications with process membership.

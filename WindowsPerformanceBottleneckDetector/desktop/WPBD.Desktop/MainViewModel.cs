@@ -110,32 +110,68 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     private string _processSearch = "";
     private string _processFilter = "All captured";
     private ICollectionView _processes = CollectionViewSource.GetDefaultView(Array.Empty<ProcessReading>());
+    private ICollectionView _applications = CollectionViewSource.GetDefaultView(Array.Empty<ApplicationReading>());
+    private string _applicationSort = "Private memory";
     public ICollectionView Processes => _processes;
-    public IReadOnlyList<ApplicationReading> Applications => _report?.Applications ?? [];
-    public IReadOnlyList<string> ProcessFilters { get; } = ["All captured", "Attributed", "Unattributed", "CPU measured", "Memory measured"];
+    public ICollectionView Applications => _applications;
+    public IReadOnlyList<string> ProcessFilters { get; } = ["All captured", "Identified application", "Windows system process",
+        "Protected or restricted process", "Unattributed application process", "Unknown process ownership",
+        "Metadata restricted", "Verified identity", "Provisional identity", "CPU measured", "Memory measured"];
+    public IReadOnlyList<string> ApplicationSorts { get; } = ["Private memory", "Working set", "CPU", "Name"];
+    public string ApplicationSort
+    {
+        get => _applicationSort;
+        set { _applicationSort = value; SortApplications(); Changed(); }
+    }
     public string ProcessSearch
     {
         get => _processSearch;
-        set { _processSearch = value; _processes.Refresh(); Changed(); }
+        set { _processSearch = value; _processes.Refresh(); _applications.Refresh(); Changed(); }
     }
     public string ProcessFilter
     {
         get => _processFilter;
-        set { _processFilter = value; _processes.Refresh(); Changed(); }
+        set { _processFilter = value; _processes.Refresh(); _applications.Refresh(); Changed(); }
     }
-    public string ProcessCount => $"{_report?.Processes.Count ?? 0} captured entries. Each row represents a verified process instance or an individual sighting when start time is unavailable.";
+    public string ProcessCount => _report?.Attribution is { } quality
+        ? $"{quality.UniqueIdentities} identities · {quality.Verified} verified · {quality.Provisional} provisional · {quality.UniquePids} distinct PIDs · {quality.Observations} observations · peak {quality.PeakConcurrent} concurrently captured"
+        : $"{_report?.Processes.Count ?? 0} recorded entries. Historical reports retain their original identity rules.";
+    public string AttributionSummary => _report?.Attribution is { } quality
+        ? $"{quality.Identified} identified application · {quality.WindowsSystem} Windows system · {quality.RestrictedOwnership} protected/restricted ownership · {quality.Unattributed} unattributed application · {quality.Unknown} unknown ownership. Attributed {Format(quality.AttributedPercent, "0.0", "%")}. Restricted metadata affects {quality.Restricted} identities and can overlap a known process type."
+        : "Attribution quality was not recorded in this report.";
+    public string AttributionMemory => _report?.Attribution is { } quality
+        ? $"Unattributed private-memory footprint peaked at {Format(quality.UnattributedPrivateMiB, "N1", " MiB")} using complete same-sample totals. Attribution confidence describes ownership evidence independently of measurement availability."
+        : "Ownership cannot be reassessed without recorded metadata.";
     private bool FilterProcess(object item)
     {
         var process = (ProcessReading)item;
-        var text = $"{process.Name} {process.Pid} {process.Path} {process.Application}";
+        var text = $"{process.Name} {process.Pid} {process.Path} {process.Application} {process.Services} {process.AttributionCategory}";
         return text.Contains(_processSearch, StringComparison.OrdinalIgnoreCase) && _processFilter switch
         {
-            "Attributed" => process.Application != "Unattributed",
-            "Unattributed" => process.Application == "Unattributed",
+            "Metadata restricted" => process.MetadataAccess == "Restricted",
+            "Verified identity" => process.IdentityStatus.StartsWith("Verified", StringComparison.Ordinal),
+            "Provisional identity" => process.IdentityStatus == "Provisional",
             "CPU measured" => process.AverageCpuPercent.HasValue,
             "Memory measured" => process.PrivateMiB.HasValue || process.WorkingSetMiB.HasValue,
-            _ => true
+            "All captured" => true,
+            _ => process.AttributionCategory == _processFilter
         };
+    }
+    private void SortApplications()
+    {
+        var property = _applicationSort switch
+        {
+            "Working set" => nameof(ApplicationReading.WorkingSetMiB),
+            "CPU" => nameof(ApplicationReading.AverageCpu),
+            "Name" => nameof(ApplicationReading.Name),
+            _ => nameof(ApplicationReading.PrivateMiB)
+        };
+        using (_applications.DeferRefresh())
+        {
+            _applications.SortDescriptions.Clear();
+            _applications.SortDescriptions.Add(new SortDescription(property,
+                property == nameof(ApplicationReading.Name) ? ListSortDirection.Ascending : ListSortDirection.Descending));
+        }
     }
     public IReadOnlyList<string> CoverageGaps => _report?.CoverageGaps ?? [];
     public IReadOnlyList<string> CollectionErrors => _report?.Quality.Errors ?? [];
@@ -190,6 +226,7 @@ internal sealed class MainViewModel : INotifyPropertyChanged
         _cancellation = cancellation;
         _report = null;
         _processes = CollectionViewSource.GetDefaultView(Array.Empty<ProcessReading>());
+        _applications = CollectionViewSource.GetDefaultView(Array.Empty<ApplicationReading>());
         _writing = false;
         _expected = _slot = _collected = _timelineIndex = 0;
         Timeline.Clear();
@@ -336,6 +373,9 @@ internal sealed class MainViewModel : INotifyPropertyChanged
         _report = report;
         _processes = new ListCollectionView(report.Processes.ToList());
         _processes.Filter = FilterProcess;
+        _applications = new ListCollectionView((report.Applications ?? []).ToList());
+        _applications.Filter = item => ((ApplicationReading)item).Processes.Any(FilterProcess);
+        SortApplications();
         _expected = report.Quality.Expected;
         _slot = _expected;
         _collected = report.Quality.Actual;

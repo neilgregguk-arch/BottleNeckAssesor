@@ -1,10 +1,10 @@
 # Windows Performance Bottleneck Detector
 
-WPBD 0.4 packages the Windows desktop app as a single installer. WPBD samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. The read-only engine runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. It requires no agent, external PowerShell module or internet connection.
+WPBD 0.5 packages the Windows desktop app as a single installer and reports process identity and attribution quality. WPBD samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. The read-only engine runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. It requires no agent, external PowerShell module or internet connection.
 
 ## Install WPBD
 
-Copy `WPBD-Setup-0.4.2-x64.exe` to a compatible workstation and double-click it. Setup installs the app for the current user under `%LOCALAPPDATA%\Programs\WPBD`, adds a Start menu shortcut and offers an optional desktop shortcut. Select **Launch Windows Performance Bottleneck Detector** at the end of Setup, or open WPBD from Start.
+Copy `WPBD-Setup-0.5.0-x64.exe` to a compatible workstation and double-click it. Setup installs the app for the current user under `%LOCALAPPDATA%\Programs\WPBD`, adds a Start menu shortcut and offers an optional desktop shortcut. Select **Launch Windows Performance Bottleneck Detector** at the end of Setup, or open WPBD from Start.
 
 The installer bundles the self-contained .NET 10 desktop runtime and diagnostic scripts. The target needs native x64 Windows 11 or a Windows 10 edition supported by .NET 10, Windows PowerShell 5.1, and write access to the user's local application data. Setup works offline and runs with current-user permissions. Your organisation's application-control and script policies still apply. [Microsoft .NET Windows support](https://learn.microsoft.com/dotnet/core/install/windows#supported-versions)
 
@@ -15,7 +15,7 @@ To remove WPBD, close it and select **Uninstall** in Windows **Settings > Apps >
 The unsigned installer may trigger a Microsoft Defender SmartScreen warning. Verify it against the SHA-256 published by your distributor and follow your organisation's approval process. With the setup file and its checksum file in the current folder, a technician can verify the bytes with:
 
 ```powershell
-$name = 'WPBD-Setup-0.4.2-x64.exe'
+$name = 'WPBD-Setup-0.5.0-x64.exe'
 $expected = ((Get-Content -LiteralPath ".\$name.sha256" -Raw).Trim() -split '\s+', 2)[0]
 $actual = (Get-FileHash -LiteralPath ".\$name" -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw 'Installer SHA-256 mismatch.' }
@@ -30,12 +30,12 @@ Use the .NET 10 SDK and Inno Setup 6.3 or newer on a Windows build machine. From
 .\installer\Build-Installer.ps1
 ```
 
-Use `-ISCCPath 'C:\path\to\ISCC.exe'` if the compiler is in a custom location. The build publishes into a fresh staging directory, checks the runtime and engine payload, compiles the EXE and writes a `.sha256` file under `installer\artifacts`. An initial build may need NuGet access to restore the x64 runtime packs. Set `VERSION` for each release. For an isolated upgrade test, use `-VersionOverride 0.4.3 -OutputDirectory <test-output-folder>` and keep the installer AppId unchanged. [Inno Setup downloads](https://jrsoftware.org/inno-setup/downloads)
+Use `-ISCCPath 'C:\path\to\ISCC.exe'` if the compiler is in a custom location. The build publishes into a fresh staging directory, checks the runtime and engine payload, compiles the EXE and writes a `.sha256` file under `installer\artifacts`. An initial build may need NuGet access to restore the x64 runtime packs. Set `VERSION` for each release. For an isolated upgrade test, use `-VersionOverride 0.5.1 -OutputDirectory <test-output-folder>` and keep the installer AppId unchanged. [Inno Setup downloads](https://jrsoftware.org/inno-setup/downloads)
 
 For production signing, use an organisation-issued Authenticode code-signing certificate and the Windows SDK SignTool. Sign the finished installer and regenerate its checksum from the signed bytes. Use the organisation's certificate thumbprint and RFC 3161 timestamp service. [Microsoft SignTool reference](https://learn.microsoft.com/windows/win32/seccrypto/signtool)
 
 ```powershell
-$setup = '.\installer\artifacts\WPBD-Setup-0.4.2-x64.exe'
+$setup = '.\installer\artifacts\WPBD-Setup-0.5.0-x64.exe'
 signtool sign /sha1 'CERTIFICATE_THUMBPRINT' /fd SHA256 /tr 'RFC3161_TIMESTAMP_URL' /td SHA256 $setup
 if ($LASTEXITCODE -ne 0) { throw 'Installer signing failed.' }
 signtool verify /pa $setup
@@ -48,17 +48,35 @@ $hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvaria
 
 ### Processes and applications
 
-Version 0.4.2 provides **All Processes**, searchable by name, PID, path or application. Filters show attributed, unattributed, CPU-measured or memory-measured entries. All numeric columns sort by measured value. Verified identities use PID and process start time. Entries with inaccessible start times remain separate sightings. Process rows show individual peaks across their observed window.
+**All Processes** supports search by name, PID, path, service, category or application. Filters select ownership categories, restricted metadata, verified or provisional identity, and available CPU or memory measurements. Numeric columns sort by measured value. Process rows show individual peaks across the observed window.
 
 **Applications** groups identical executable paths and WebView2 descendants whose parent identities establish a chain to a host executable. Microsoft Store Teams is labelled Microsoft Teams when its executable is ms-teams.exe inside an MSTeams package path. Other hosts keep their executable names and paths. A command-line WebView host executable hint can reject inconsistent ownership. A name, PID, WebView2 runtime location or user-data folder alone cannot establish ownership. Expand a group for its processes and evidence.
 
-Parent metadata is captured once before sampling and once after it. PID and creation timestamps must match, with microsecond precision to accommodate CIM timestamps. Parent creation must precede child creation. Processes that exit between inventories, restricted paths, missing parents, ambiguous ancestry and unverified identities remain **Unattributed**. The complete command line is queried transiently and only the WebView host executable hint is retained. Process metadata may expose executable paths and host names in reports.
+Process and service metadata are queried before sampling and after it. Enrichment uses PID and creation time with microsecond precision to accommodate CIM timestamps. Parent creation must precede child creation. Service names are associated only where a matching process creation time predates the service inventory. Commands are queried transiently and only the WebView host executable hint is retained. The package directory is recorded where the executable path exposes it, without claiming a separate package API lookup.
+
+Verified identities use PID and process creation time. When creation time is inaccessible, a provisional key tracks the same PID/name over consecutive captured observations. An observed absence, name change, cumulative CPU regression or conflicting accessible path ends continuity. A transition between verified and provisional evidence also starts a separate identity. Missed scheduling slots alone do not prove a process disappeared. Replacement between consecutive captures with identical PID/name and inaccessible lifetime metadata can be undetectable. Provisional CPU deltas remain unavailable, while measured memory is retained.
+
+Ownership category, identity verification and metadata access are separate fields. **Identified application** uses a matching executable path or a verified WebView2 ancestry. **Windows system process** requires an actual Windows system directory path plus a recognised Windows component filename. Associated service names provide additional evidence. A similarly named executable elsewhere remains grouped under its own path. **Protected or restricted process** requires an observed access-denied error and no established owner. **Unattributed application process** has an accessible path but insufficient host ownership, such as orphaned WebView2. **Unknown process ownership** lacks the required evidence. A known Windows component can separately show restricted metadata. These categories convey evidence and access quality.
 
 Application memory totals sum members present in each sample, then calculate the maximum of those aligned totals. A missing measurement from any present member makes that metric's total unavailable for the sample. Complete-sample counts appear in the Applications view. These totals are based on sequential process reads within a capture, so they are not an atomic Windows memory snapshot. Processes that start and exit entirely between captures remain unobserved.
 
 Private bytes are committed private allocation and can include paged-out memory. Working set includes shared and private resident pages, so summing working sets can count shared pages repeatedly. Task Manager commonly displays private resident working-set accounting and can use different grouping and refresh timing. WPBD does not collect private resident working set, so its application totals may differ from Task Manager's memory column. [Microsoft memory accounting guidance](https://learn.microsoft.com/en-us/troubleshoot/windows-server/performance/troubleshoot-application-service-memory-leaks), [WebView2 process model](https://learn.microsoft.com/microsoft-edge/webview2/concepts/process-model)
 
-Report schema remains 0.2 with additive optional fields: `Statistics.Processes.All`, `ProcessMetadata`, and `Applications`. Applications include member processes, per-sample totals, measurement coverage and aggregate statistics. Existing leader fields remain available. Older 0.1 and 0.2 reports reconstruct All Processes from their raw samples. Ownership remains unavailable for older reports lacking verified metadata. Diagnostic classification thresholds are unchanged.
+The attribution summary reports verified/provisional identities, distinct PIDs, total observations and maximum concurrent captured processes. Application groups similarly distinguish unique identities, observations and peak concurrent membership. Complete group CPU samples sum member CPU percentages and report their arithmetic mean and maximum. A member with unavailable CPU makes that group's CPU total unavailable for the sample. Attribution confidence describes ownership evidence independently from performance measurements. Restricted metadata counts can overlap known Windows or application categories. Attributed coverage is identified application plus Windows system identities divided by all identities. Unattributed private-memory footprint combines the remaining three categories in each sample before taking its peak.
+
+Report schema 0.3 records the changed identity semantics explicitly. Existing measurements and leader fields remain, with additional identity status, metadata access, parent PID, associated services, package directory, application category and attribution confidence. Raw process samples include the generated instance key. `AttributionQuality` contains counts and same-sample unattributed memory. `Applications` gains CPU statistics, unique identity count, observation count, concurrent membership and confidence. The desktop reads schemas 0.1, 0.2 and 0.3. Historical records retain their recorded identity rules and attribution, with unavailable quality shown explicitly. Older versions need upgrading to read schema 0.3. Diagnostic classification thresholds are unchanged.
+
+The root-cause review is in `PROCESS_IDENTITY_REVIEW.md`. The reproducible Pester dataset `New-IdentitySamples` captures four processes over 15 samples, including two without start times.
+
+| Quantity | Previous per-slot identity rule | Version 0.5 |
+| --- | --- | --- |
+| Unique identity records | 32 | 4 |
+| Unverified/provisional identity records | 30 | 2 |
+| Captured observations | 60 | 60 |
+| Peak concurrent processes | 4 | 4 |
+| Complete combined private memory | 100 MiB | 100 MiB |
+
+These are synthetic regression inputs. The identity count correction preserves same-sample memory accounting. Windows can still restrict metadata, and enrichment can miss short-lived processes between inventories.
 
 ### Build and run
 
@@ -85,12 +103,12 @@ Copy the entire `win-x64` output folder to the target workstation, including its
 1. Choose 30 seconds, 60 seconds, 2 minutes or 5 minutes, and a 1-, 2-, 5- or 10-second interval. Reports default to `%LOCALAPPDATA%\WPBD\Reports`. Use **Choose folder** to direct reports to an existing writable location.
 2. Select **Start Diagnostic**. The Dashboard shows completed samples, elapsed sample time, live CPU and memory, available RAM, and disk activity and latency. Graphs use elapsed sample times from the engine. Breaks indicate unavailable measurements or skipped slots. Use the slider or arrow keys on the focused slider to inspect a sample across all four graphs. The storage chart uses the highest measured read or write latency across disks. Expand the activity row for per-disk values.
 3. Review **Findings** after collection. Severity, advisory status and confidence are written out. The coverage summary identifies incomplete evidence. Use **Processes** to sort the engine's ranked process rows by CPU, private memory or working set.
-4. Use **Reports** to open the paired HTML report, open the selected reports folder, load a history entry or browse to a saved JSON report. History lists WPBD JSON files in the selected folder. The app can load schema 0.1 and 0.2 reports. A missing HTML companion leaves JSON review available.
+4. Use **Reports** to open the paired HTML report, open the selected reports folder, load a history entry or browse to a saved JSON report. History lists WPBD JSON files in the selected folder. The app can load schema 0.1, 0.2 and 0.3 reports. A missing HTML companion leaves JSON review available.
 5. Select **Cancel Diagnostic** during collection or analysis. The app retains the partial timeline for inspection and presents a cancelled status. Once report writing begins, export is allowed to finish.
 
 ### Integration and troubleshooting
 
-`WPBD.Desktop` contains the WPF views, chart control and view model. `WPBD.Core` handles validated configuration, asynchronous worker execution, report parsing and history. The PowerShell worker imports the packaged module by absolute path into a fresh profile-free process. The desktop app passes arguments directly to the Windows PowerShell executable. The worker emits one UTF-8 JSON object per line with protocol number `1`, a `Type` and `Data`. Event types are `phase`, `sample`, `completed`, `cancelled` and `error`. The sample events contain a projection from the same measurements written to the report. The JSON report remains schema 0.2 and supplies the completed assessment.
+`WPBD.Desktop` contains the WPF views, chart control and view model. `WPBD.Core` handles validated configuration, asynchronous worker execution, report parsing and history. The PowerShell worker imports the packaged module by absolute path into a fresh profile-free process. The desktop app passes arguments directly to the Windows PowerShell executable. The worker emits one UTF-8 JSON object per line with protocol number `1`, a `Type` and `Data`. Event types are `phase`, `sample`, `completed`, `cancelled` and `error`. The sample events contain a projection from the same measurements written to the report. JSON schema 0.3 supplies the completed assessment and attribution quality.
 
 Cancellation signals a private, session-local Windows event checked by the worker. If a worker fails to respond to cancellation within 15 seconds before export, WPBD can stop that specific child process. Report export is handled by the original PowerShell engine. App logs are stored in `%LOCALAPPDATA%\WPBD\Logs` and opened using **Logs**. Errors show a short message and expandable technical details.
 
@@ -181,7 +199,7 @@ The CLI writes two UTF-8 files with the same filename stem containing the comput
 - **CPU** uses successive raw processor counter readings to measure busy time. The JSON includes per-logical-processor samples where supported. System averages are arithmetic means of available samples. The percentage above threshold uses available total CPU samples as its denominator. [Windows processor counter guidance](https://learn.microsoft.com/en-us/windows/win32/perfctrs/collecting-performance-data)
 - **Process CPU** is the difference in cumulative CPU seconds across consecutive observations of the same PID and start time, divided by elapsed sampling time and logical processor count. One fully utilised logical processor on a four-logical-processor workstation accounts for 25% of machine capacity. Process average CPU is weighted by the length of its observed intervals. Cumulative CPU in the diagnostic sums observed deltas only.
 - **Memory** uses bytes in JSON and binary units (MiB and GiB) in HTML. Commit utilisation uses the sampled commit limit. Page reads/s counts read operations that resolve hard faults and pages input/s counts the pages read. File-backed reads can contribute to both. Page output/s, free and zero page list bytes, and modified page list bytes provide context from the same query where available. These counters do not attribute activity to the pagefile. [Microsoft guidance on hard faults and pagefile counters](https://learn.microsoft.com/en-us/troubleshoot/windows-client/performance/how-to-determine-the-appropriate-page-file-size-for-64-bit-versions-of-windows)
-- **Process memory** reports peak private bytes and peak working set separately. Private bytes measure private allocation, which may be paged out. Working set measures resident pages and can include shared pages. Observations with unavailable start times remain separate. Each memory ranking shows the highest single observation per unverified PID and name to avoid repeated entries.
+- **Process memory** reports peak private bytes and peak working set separately. Private bytes measure private allocation, which may be paged out. Working set measures resident pages and can include shared pages. Consecutive provisional identities are grouped using the rules above. Each process ranking uses a distinct verified or provisional identity.
 - **Storage** measures read and write rates as operations/s and bytes/s. Latency is reported in milliseconds and each average is weighted by the number of completed operations. An idle interval can have zero IOPS with unavailable latency. Active time is calculated from the idle-time counter and queue length is a count of outstanding requests at the sample. Drive sizes and free bytes are queried for fixed logical drives after sampling. [Physical disk raw counter reference](https://learn.microsoft.com/en-us/previous-versions/aa394308(v=vs.85))
 
 ### Sampling and reliability
@@ -193,11 +211,11 @@ The CLI writes two UTF-8 files with the same filename stem containing the comput
 
 ### JSON compatibility
 
-Schema `0.2` retains the existing top-level fields, findings, measurement keys and statistics. New top-level fields are `Advisories`, `MemoryAssessment`, `SamplingQuality` and `CollectionTiming`. `Assessment.AdvisoryCount` counts advisories. Memory pressure findings retain `Category = 'Memory pressure'` and add `Classification` for the potential or severe tier.
+Schema `0.3` retains the established measurement and diagnostic fields from schema `0.2`, including `Advisories`, `MemoryAssessment`, `SamplingQuality` and `CollectionTiming`. `Assessment.AdvisoryCount` counts advisories. Memory pressure findings retain `Category = 'Memory pressure'` and `Classification` for the potential or severe tier. Process identity and quality changes are described above.
 
 Samples add the scheduled offset, CPU provider, CPU status and measured CPU interval, collection timing and optional memory context. `Configuration.ProcessorCounterClass` is the most recent successfully selected provider. Compare sample-level provider names to see which provider was queried at each point. `StartedUtc` and `ActualDurationSeconds` describe the window after baseline collection. `SamplingQuality.MissedSampleCount` counts skipped slots. A `MissedSlots` collection error counts overrun or scheduling incidents, which can span multiple slots.
 
-`Statistics.Memory.PressureSamples` and `PressureWithPagingSamples` now include both potential and severe qualifying samples. The severe subset has its own count. Relative headroom and new supporting measurements have individual coverage counts. Unverified process sightings now count separately in `Statistics.Processes.ObservedInstances`. Other existing keys keep their shapes. Missing measurements remain JSON `null`.
+`Statistics.Memory.PressureSamples` and `PressureWithPagingSamples` include both potential and severe qualifying samples. The severe subset has its own count. Relative headroom and supporting measurements have individual coverage counts. `Statistics.Processes.ObservedInstances` now counts distinct verified and provisional identities. Observation counts are reported separately. Other measurement keys keep their shapes. Missing measurements remain JSON `null`.
 
 ## Limitations
 

@@ -248,6 +248,7 @@ Describe 'WPBD diagnostic engine' {
                         TotalProcessorTime = [timespan]::FromSeconds(2); PrivateMemorySize64 = 123; WorkingSet64 = 456
                     }
                     $active | Add-Member ScriptMethod Dispose {}
+                    $active | Add-Member ScriptMethod get_StartTime { $this.StartTime }
                     $exited
                     $active
                 }
@@ -412,7 +413,7 @@ Describe 'WPBD diagnostic engine' {
             $rank[0].CumulativeCpuSeconds | Should Be 3.25
             $rank[1].CumulativeCpuSeconds | Should Be 0.5
         }
-        It 'keeps unverified process identities separate when a PID can have been reused' {
+        It 'keeps consecutive unverified sightings in a labelled provisional identity' {
             $metrics = New-TestMetrics
             foreach ($sample in $metrics.Samples) {
                 $sample.Processes[0].StartUtc = $null
@@ -420,9 +421,10 @@ Describe 'WPBD diagnostic engine' {
                 $sample.Processes[0].CpuPercent = $null
             }
             $statistics = (Get-WpbdAnalysis $metrics).Statistics.Processes
-            $statistics.ObservedInstances | Should Be 5
+            $statistics.ObservedInstances | Should Be 1
             $statistics.Leaders.PeakPrivateBytes.Count | Should Be 1
-            $statistics.Leaders.PeakPrivateBytes[0].Observations | Should Be 1
+            $statistics.Leaders.PeakPrivateBytes[0].Observations | Should Be 5
+            $statistics.All[0].IdentityStatus | Should Be 'Provisional'
             $statistics.Leaders.PeakPrivateBytes[0].PeakPrivateBytes | Should Be 505MB
         }
         It 'reports actual slots, valid counts and measured sampling overhead independently' {
@@ -480,7 +482,7 @@ Describe 'WPBD diagnostic engine' {
             $report = Get-WpbdAnalysis $metrics
             $paths = Export-WpbdReport $report (Join-Path $TestDrive 'nested')
             $json = Get-Content -LiteralPath $paths.JsonPath -Raw | ConvertFrom-Json
-            $json.SchemaVersion | Should Be '0.2'
+            $json.SchemaVersion | Should Be '0.3'
             $json.Samples.Count | Should Be 5
             $json.Samples[0].CpuTotalPercent | Should BeNullOrEmpty
             $json.Samples[0].Memory.PageReadsPerSecond | Should Be 0
@@ -557,7 +559,7 @@ Describe 'Application attribution and aligned memory' {
             $teams.Processes.Count | Should Be 2
             $teams.Processes[1].Application | Should Be 'Microsoft Teams'
             ($groups | Where-Object Name -eq 'other').Processes.Count | Should Be 2
-            ($groups | Where-Object Name -eq 'Unattributed').Processes.Count | Should Be 3
+            ($groups | Where-Object Name -eq 'Unknown process ownership').Processes.Count | Should Be 1
         }
         It 'takes peaks from aligned sums and drops terminated members from later samples' {
             $fixture=New-ApplicationFixture
@@ -582,7 +584,8 @@ Describe 'Application attribution and aligned memory' {
             $process=Get-WpbdProcessStatistics $fixture.Samples @{} 4
             $groups=@(Get-WpbdApplications $fixture.Samples $process.All $fixture.Metadata)
             ($groups | Where-Object Name -eq 'Microsoft Teams').Processes.Count | Should Be 1
-            ($groups | Where-Object Name -eq 'Unattributed').Processes.Count | Should Be 5
+            ($groups | Where-Object Name -eq 'Unattributed application process').Processes.Count | Should Be 2
+            ($groups | Where-Object Name -eq 'Unknown process ownership').Processes.Count | Should Be 1
         }
         It 'matches CIM and Get-Process timestamps at microsecond precision' {
             (Get-WpbdProcessIdentity 10 '2026-01-02T00:00:00.1234567Z') |
@@ -597,6 +600,147 @@ Describe 'Application attribution and aligned memory' {
             $process=Get-WpbdProcessStatistics @($sample) @{} 4
             $process.All.Count | Should Be 45
             $process.Leaders.PeakPrivateBytes.Count | Should Be 10
+        }
+    }
+}
+Describe 'Session identity quality and attribution categories' {
+    InModuleScope WPBD {
+        function New-IdentitySamples {
+            param([int] $Count=15)
+            @(foreach($slot in 1..$Count) {
+                [pscustomobject]@{
+                    Slot=$slot; TimestampUtc=([datetime]'2026-01-02Z').AddSeconds($slot).ToString('o')
+                    Processes=@(
+                        [pscustomobject]@{Id=10;Name='restricted-a';StartUtc=$null;MetadataAccess='Restricted';PrivateBytes=10MB;WorkingSetBytes=5MB}
+                        [pscustomobject]@{Id=11;Name='restricted-b';StartUtc=$null;MetadataAccess='Restricted';PrivateBytes=20MB;WorkingSetBytes=10MB}
+                        [pscustomobject]@{Id=20;Name='verified-a';StartUtc='2026-01-01T00:00:00Z';PrivateBytes=30MB;WorkingSetBytes=15MB;CpuPercent=10}
+                        [pscustomobject]@{Id=21;Name='verified-b';StartUtc='2026-01-01T00:00:00Z';PrivateBytes=40MB;WorkingSetBytes=20MB;CpuPercent=20}
+                    )
+                }
+            })
+        }
+        It 'reproduces the old inflation and tracks four identities across sixty observations' {
+            $samples=New-IdentitySamples
+            $oldUnknownCount=@($samples.Processes | Where-Object {-not $_.StartUtc}).Count
+            $oldUnknownCount | Should Be 30
+            ($oldUnknownCount + 2) | Should Be 32
+            $statistics=Get-WpbdProcessStatistics $samples @{} 4
+            $groups=@(Get-WpbdApplications $samples $statistics.All @())
+            $quality=Get-WpbdAttributionQuality $samples $statistics.All
+            $statistics.All.Count | Should Be 4
+            $quality.UniqueIdentities | Should Be 4
+            $quality.VerifiedIdentities | Should Be 2
+            $quality.ProvisionalIdentities | Should Be 2
+            $quality.Observations | Should Be 60
+            $quality.UnattributedPrivateBytes.Maximum | Should Be 100MB
+            $quality.ConcurrentProcesses.Maximum | Should Be 4
+            $quality.RestrictedProcesses | Should Be 2
+            ($groups | Where-Object Name -eq 'Protected or restricted process').UniqueIdentities | Should Be 2
+            ($groups | Where-Object Name -eq 'Protected or restricted process').Observations | Should Be 30
+            ($groups | Where-Object Name -eq 'Protected or restricted process').ConcurrentProcesses.Maximum | Should Be 2
+            ($groups | Where-Object Name -eq 'Protected or restricted process').PrivateBytes.Maximum | Should Be 30MB
+            ($groups | Where-Object Name -eq 'Protected or restricted process').CpuPercent.Maximum | Should BeNullOrEmpty
+        }
+        It 'ends a provisional identity on observed absence and restarts it on reappearance' {
+            $samples=New-IdentitySamples -Count 3
+            $samples[1].Processes=@($samples[1].Processes | Where-Object Id -ne 10)
+            $statistics=Get-WpbdProcessStatistics $samples @{} 4
+            @($statistics.All | Where-Object Id -eq 10).Count | Should Be 2
+            @($statistics.All | Where-Object Id -eq 11).Count | Should Be 1
+            $samples[0].Processes[0].InstanceKey | Should Not Be $samples[2].Processes[0].InstanceKey
+        }
+        It 'splits provisional continuity on name changes and cumulative CPU regression' {
+            $samples=New-IdentitySamples -Count 3
+            $samples[1].Processes[0].Name='replacement'
+            $samples[0].Processes[1] | Add-Member TotalCpuSeconds 20
+            $samples[1].Processes[1] | Add-Member TotalCpuSeconds 10
+            $samples[2].Processes[1] | Add-Member TotalCpuSeconds 11
+            $statistics=Get-WpbdProcessStatistics $samples @{} 4
+            @($statistics.All | Where-Object Id -eq 10).Count | Should Be 3
+            @($statistics.All | Where-Object Id -eq 11).Count | Should Be 2
+        }
+        It 'never silently upgrades a provisional identity to verified on a later sighting' {
+            $samples=New-IdentitySamples -Count 3
+            $samples[1].Processes[0].StartUtc='2026-01-02T00:00:01Z'
+            $samples[2].Processes[0].StartUtc='2026-01-02T00:00:01Z'
+            $statistics=Get-WpbdProcessStatistics $samples @{} 4
+            @($statistics.All | Where-Object Id -eq 10).Count | Should Be 2
+            @($statistics.All | Where-Object { $_.Id -eq 10 -and $_.IdentityStatus -eq 'Verified' }).Count | Should Be 1
+        }
+        It 'keeps Windows type independent from restrictions and rejects a system-like name at an unrelated path' {
+            $start='2026-01-01T00:00:00Z'
+            $sample=[pscustomobject]@{Slot=1;TimestampUtc='2026-01-02T00:00:00Z';Processes=@(
+                [pscustomobject]@{Id=10;Name='svchost';StartUtc=$start;MetadataAccess='Restricted';PrivateBytes=10MB;WorkingSetBytes=9MB}
+                [pscustomobject]@{Id=11;Name='svchost';StartUtc=$start;MetadataAccess='Available';PrivateBytes=20MB;WorkingSetBytes=18MB}
+                [pscustomobject]@{Id=12;Name='agent';StartUtc=$start;MetadataAccess='Available';PrivateBytes=30MB;WorkingSetBytes=28MB}
+            )}
+            $metadata=@(
+                [pscustomobject]@{Identity=Get-WpbdProcessIdentity 10 $start;Id=10;StartUtc=$start;Path=(Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\svchost.exe');Services=@('ExampleService')}
+                [pscustomobject]@{Identity=Get-WpbdProcessIdentity 11 $start;Id=11;StartUtc=$start;Path='C:\ThirdParty\svchost.exe'}
+            )
+            $statistics=Get-WpbdProcessStatistics @($sample) @{} 4
+            $groups=@(Get-WpbdApplications @($sample) $statistics.All $metadata)
+            ($statistics.All | Where-Object Id -eq 10).AttributionCategory | Should Be 'Windows system process'
+            ($statistics.All | Where-Object Id -eq 10).MetadataAccess | Should Be 'Restricted'
+            ($statistics.All | Where-Object Id -eq 10).Services[0] | Should Be 'ExampleService'
+            ($statistics.All | Where-Object Id -eq 11).AttributionCategory | Should Be 'Identified application'
+            ($statistics.All | Where-Object Id -eq 12).AttributionCategory | Should Be 'Unknown process ownership'
+            $quality=Get-WpbdAttributionQuality @($sample) $statistics.All
+            $quality.WindowsSystemProcesses | Should Be 1
+            $quality.RestrictedProcesses | Should Be 1
+            [Math]::Round($quality.AttributedPercent) | Should Be 67
+        }
+        It 'uses aligned totals for unattributed memory and complete group CPU values' {
+            $samples=New-IdentitySamples -Count 2
+            $samples[0].Processes[0].PrivateBytes=100MB
+            $samples[0].Processes[1].PrivateBytes=1MB
+            $samples[1].Processes[0].PrivateBytes=1MB
+            $samples[1].Processes[1].PrivateBytes=100MB
+            $start='2026-01-01T00:00:00Z'
+            $metadata=@(foreach($id in @(20,21)){[pscustomobject]@{
+                Identity=Get-WpbdProcessIdentity $id $start;Id=$id;StartUtc=$start;Path='C:\Apps\app.exe'
+            }})
+            $statistics=Get-WpbdProcessStatistics $samples @{} 4
+            $groups=@(Get-WpbdApplications $samples $statistics.All $metadata)
+            (Get-WpbdAttributionQuality $samples $statistics.All).UnattributedPrivateBytes.Maximum | Should Be 101MB
+            $group=$groups | Where-Object Name -eq 'app'
+            $group.CpuPercent.Average | Should Be 30
+            $group.CpuPercent.Maximum | Should Be 30
+            $group.UniqueIdentities | Should Be 2
+            $samples[1].Processes[3].CpuPercent=$null
+            $statistics=Get-WpbdProcessStatistics $samples @{} 4
+            $group=@(Get-WpbdApplications $samples $statistics.All $metadata) | Where-Object Name -eq 'app'
+            $group.Samples[1].CpuPercent | Should BeNullOrEmpty
+        }
+        It 'preserves unavailable unattributed memory and independent measurement confidence' {
+            $samples=New-IdentitySamples -Count 2
+            $samples[0].Processes[0].PrivateBytes=$null
+            $statistics=Get-WpbdProcessStatistics $samples @{} 4
+            Get-WpbdApplications $samples $statistics.All @() | Out-Null
+            $quality=Get-WpbdAttributionQuality $samples $statistics.All
+            $quality.UnattributedSamples[0].PrivateBytes | Should BeNullOrEmpty
+            $quality.UnattributedPrivateBytes.Count | Should Be 1
+            ($statistics.All | Where-Object Id -eq 11).PeakPrivateBytes | Should Be 20MB
+            ($statistics.All | Where-Object Id -eq 11).AttributionConfidence | Should Be 'Low'
+        }
+        It 'records an explicit access-denied start time as restricted without dropping measurements' {
+            Mock Get-Process {
+                $restricted=[pscustomobject]@{Id=10;ProcessName='restricted';TotalProcessorTime=[timespan]::FromSeconds(2);PrivateMemorySize64=1MB;WorkingSet64=2MB}
+                $restricted | Add-Member ScriptMethod get_StartTime {throw [ComponentModel.Win32Exception]::new(5)}
+                $restricted | Add-Member ScriptMethod Dispose {}
+                $restricted
+            }
+            $rows=@(Get-WpbdProcessSnapshot ([Diagnostics.Stopwatch]::StartNew()) ([ordered]@{}))
+            $rows.Count | Should Be 1
+            $rows[0].MetadataAccess | Should Be 'Restricted'
+            $rows[0].PrivateBytes | Should Be 1MB
+            $rows[0].StartUtc | Should BeNullOrEmpty
+        }
+        It 'keeps the unattributed footprint unavailable when process collection has no measurements' {
+            $sample=[pscustomobject]@{Slot=1;TimestampUtc='2026-01-02T00:00:00Z';Processes=@()}
+            $quality=Get-WpbdAttributionQuality @($sample) @()
+            $quality.UnattributedSamples[0].PrivateBytes | Should BeNullOrEmpty
+            $quality.UnattributedPrivateBytes.Maximum | Should BeNullOrEmpty
         }
     }
 }

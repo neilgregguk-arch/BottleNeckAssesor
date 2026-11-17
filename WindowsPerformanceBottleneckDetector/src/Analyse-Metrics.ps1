@@ -46,19 +46,19 @@ function New-WpbdFinding {
 
 function Get-WpbdProcessStatistics {
     param($Samples, $Paths, $LogicalProcessorCount)
+    Set-WpbdProcessIdentities $Samples
     $groups = @{}
     foreach ($sample in $Samples) {
         foreach ($row in $sample.Processes) {
-            $key = "$($row.Id)/$($row.StartUtc)"
-            if (-not $row.StartUtc) {
-                # A PID and name alone do not identify a process across captures.
-                $key = "unknown/$($row.Id)/$($sample.Slot)"
-            }
+            $key = $row.InstanceKey
             if (-not $groups.ContainsKey($key)) {
                 $groups[$key] = [pscustomobject]@{
                     InstanceKey = $key
+                    IdentityStatus = $row.IdentityStatus
+                    MetadataAccess = $(if ($row.MetadataAccess) { $row.MetadataAccess } else { 'Unavailable' })
                     Id = $row.Id; Name = $row.Name; StartUtc = $row.StartUtc
-                    Path = $(if ($null -ne $Paths) { $Paths[$key] } else { $null })
+                    Path = $(if ($row.Path) { $row.Path } elseif ($null -ne $Paths -and $row.StartUtc) { $Paths["$($row.Id)/$($row.StartUtc)"] } else { $null })
+                    FirstSlot = $sample.Slot; LastSlot = $sample.Slot
                     Observations = 0; CpuIntervals = 0; ObservedCpuIntervalSeconds = 0.0
                     CumulativeCpuSeconds = $null; AverageCpuPercent = $null; PeakCpuPercent = $null
                     PeakPrivateBytes = $null; PeakWorkingSetBytes = $null
@@ -66,6 +66,8 @@ function Get-WpbdProcessStatistics {
             }
             $entry = $groups[$key]
             $entry.Observations++
+            $entry.LastSlot = $sample.Slot
+            if ($row.MetadataAccess -eq 'Restricted') { $entry.MetadataAccess = 'Restricted' }
             if ($row.StartUtc -and $null -ne $row.CpuSeconds -and $row.CpuIntervalSeconds -gt 0) {
                 $entry.CpuIntervals++
                 $entry.ObservedCpuIntervalSeconds += $row.CpuIntervalSeconds
@@ -87,16 +89,9 @@ function Get-WpbdProcessStatistics {
     }
     $leaders = [ordered]@{}
     foreach ($property in @('AverageCpuPercent', 'PeakCpuPercent', 'CumulativeCpuSeconds', 'PeakPrivateBytes', 'PeakWorkingSetBytes')) {
-        $seenUnknown = @{}
         $leaders[$property] = @($groups.Values | Where-Object { $null -ne $_.$property } |
             Sort-Object @{ Expression = $property; Descending = $true }, Name, Id, StartUtc |
-            Where-Object {
-                if ($_.StartUtc) { return $true }
-                $key = "$($_.Id)/$($_.Name)"
-                if ($seenUnknown.ContainsKey($key)) { return $false }
-                $seenUnknown[$key] = $true
-                $true
-            } | Select-Object -First 10)
+            Select-Object -First 10)
     }
     [pscustomobject]@{
         ObservedInstances = $groups.Count
@@ -340,6 +335,8 @@ function Get-WpbdAnalysis {
     $cpu | Add-Member -NotePropertyName PercentAboveThreshold -NotePropertyValue (Get-WpbdRatio $cpuHigh $cpu.Count 100)
     $process = Get-WpbdProcessStatistics $samples $Metrics.ProcessPaths $Metrics.System.LogicalProcessorCount
     $applications = @(Get-WpbdApplications $samples $process.All $Metrics.ProcessMetadata)
+    $process.InstancesWithMissingPath = @($process.All | Where-Object { -not $_.Path }).Count
+    $attribution = Get-WpbdAttributionQuality $samples $process.All
     if ($cpu.Count -lt $required) {
         $gaps.Add("Total CPU ($($cpu.Count) usable samples, $required required)")
     } elseif ($cpuHigh -ge $thresholds.MinimumSamples -and $cpuFraction -ge $thresholds.SustainedFraction) {
@@ -435,7 +432,7 @@ function Get-WpbdAnalysis {
     if ($memory.Advisory) { $advisories = @($memory.Advisory) }
     $sampling = Get-WpbdSamplingSummary $Metrics $samples $expected $cpu $memory.Statistics
     [pscustomobject]@{
-        SchemaVersion = '0.2'
+        SchemaVersion = '0.3'
         Configuration = $Metrics.Configuration; Thresholds = [pscustomobject] $thresholds; System = $Metrics.System
         StartedUtc = $Metrics.StartedUtc; CompletedUtc = $Metrics.CompletedUtc
         ActualDurationSeconds = $Metrics.ActualDurationSeconds; Samples = $samples
@@ -443,6 +440,7 @@ function Get-WpbdAnalysis {
         MemoryAssessment = $memory.Assessment; Advisories = $advisories
         ProcessMetadata = @($Metrics.ProcessMetadata | Where-Object { $null -ne $_ })
         Applications = $applications
+        AttributionQuality = $attribution
         CriticalSystemEvents = @($Metrics.CriticalSystemEvents | Where-Object { $null -ne $_ })
         CollectionErrors = @($Metrics.CollectionErrors | Where-Object { $null -ne $_ })
         Statistics = [pscustomobject]@{

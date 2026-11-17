@@ -7,6 +7,37 @@ var temporary = Directory.CreateTempSubdirectory("wpbd-tests-").FullName;
 var valid = Path.Combine(temporary, "WPBD-test.json");
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("schema 0.3 preserves provisional identity, access, service and application quality fields", async () =>
+    {
+        var document = JsonNode.Parse(Fixture("0.3"))!;
+        var process = new JsonObject { ["Id"] = 55, ["Name"] = "restricted", ["InstanceKey"] = "provisional/55/1",
+            ["IdentityStatus"] = "Provisional", ["AttributionCategory"] = "Protected or restricted process",
+            ["MetadataAccess"] = "Restricted", ["AttributionConfidence"] = "Low", ["ParentId"] = 5,
+            ["Observations"] = 15, ["Services"] = new JsonArray("ExampleService"), ["PeakPrivateBytes"] = 1048576 };
+        document["Statistics"]!["Processes"]!["All"] = new JsonArray(process.DeepClone());
+        document["AttributionQuality"] = new JsonObject {
+            ["UniqueIdentities"] = 1, ["UniquePids"] = 1, ["VerifiedIdentities"] = 0, ["ProvisionalIdentities"] = 1,
+            ["RestrictedProcesses"] = 1, ["RestrictedOwnership"] = 1, ["Observations"] = 15,
+            ["ConcurrentProcesses"] = new JsonObject { ["Maximum"] = 1 },
+            ["AttributedPercent"] = 0, ["UnattributedPrivateBytes"] = new JsonObject { ["Maximum"] = 1048576 } };
+        document["Applications"] = new JsonArray(new JsonObject {
+            ["Name"] = "Protected or restricted process", ["Key"] = "category/restricted",
+            ["AttributionCategory"] = "Protected or restricted process", ["AttributionConfidence"] = "Low",
+            ["UniqueIdentities"] = 1, ["Observations"] = 15,
+            ["ConcurrentProcesses"] = new JsonObject { ["Maximum"] = 1 },
+            ["CpuPercent"] = new JsonObject { ["Count"] = 0 },
+            ["Processes"] = new JsonArray(process.DeepClone()) });
+        var path = Path.Combine(temporary, "WPBD-quality.json");
+        await File.WriteAllTextAsync(path, document.ToJsonString());
+        var report = await DiagnosticData.LoadAsync(path);
+        Check(report.Processes.Single() is { IdentityStatus: "Provisional", MetadataAccess: "Restricted",
+            ParentPid: 5, Services: "ExampleService", Observations: 15, AverageCpuPercent: null },
+            "Process identity and access metadata were lost.");
+        Check(report.Attribution is { UniqueIdentities: 1, Provisional: 1, Observations: 15, PeakConcurrent: 1,
+            AttributedPercent: 0, UnattributedPrivateMiB: 1, RestrictedOwnership: 1 }, "Attribution quality was lost.");
+        Check(report.Applications!.Single() is { UniqueIdentities: 1, Observations: 15, PeakConcurrent: 1,
+            AverageCpu: null, Confidence: "Low" }, "Application counts or missing CPU were confused.");
+    }),
     ("legacy raw samples expose processes omitted from top-ten rankings", async () =>
     {
         var document = JsonNode.Parse(Fixture("0.2"))!;
@@ -22,6 +53,8 @@ var tests = new (string Name, Func<Task> Run)[]
         Check(report.Processes.Count == 43 && report.Processes.Count(row => row.Name == "ms-teams") == 2,
             "Captured processes were lost outside leader rankings.");
         Check(report.Processes.All(row => row.Application == "Unattributed"), "Legacy ownership was guessed.");
+        Check(report.Attribution is null && report.Processes.All(row => row.AttributionCategory == "Legacy attribution unavailable"),
+            "Historical processes were reclassified using metadata that was not recorded.");
     }),
     ("new all-process and application fields preserve membership and complete-sample counts", async () =>
     {
@@ -164,6 +197,11 @@ static async Task LiveAsync(string engine, string directory, bool overridePolicy
             pair.First.MemoryPercent == pair.Second.MemoryPercent), "Live events differed from the written report.");
     Check(report.Quality.ValidCpu > 0 && report.Samples.Any(sample => sample.AvailableBytes.HasValue) &&
         File.Exists(report.JsonPath) && File.Exists(report.HtmlPath), "The live run did not produce real data and a report pair.");
+    Check(report.Schema == "0.3" && report.Attribution is { } attribution &&
+        attribution.UniqueIdentities == report.Processes.Count &&
+        report.Processes.Select(process => process.InstanceKey).Distinct().Count() == report.Processes.Count &&
+        report.Applications!.Sum(application => application.Processes.Count) == report.Processes.Count,
+        "Live process identity or application membership counts were inconsistent.");
     Console.WriteLine($"PASS real Windows collection and paired reports ({report.Quality.Actual}/{report.Quality.Expected} samples)");
 
     using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(30));

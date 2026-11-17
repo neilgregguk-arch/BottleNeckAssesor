@@ -140,7 +140,17 @@ function Get-WpbdProcessSnapshot {
             $cpu = $null
             $private = $null
             $workingSet = $null
-            try { $started = $process.StartTime.ToUniversalTime().ToString('o') } catch {}
+            $metadataAccess = 'Unavailable'
+            try {
+                # Invoke the CLR accessor so PowerShell does not suppress getter exceptions as null.
+                $started = $process.get_StartTime().ToUniversalTime().ToString('o')
+                if ($started) { $metadataAccess = 'Available' }
+            } catch {
+                $failure = $_.Exception.GetBaseException()
+                if ($failure -is [UnauthorizedAccessException] -or $failure.NativeErrorCode -eq 5) {
+                    $metadataAccess = 'Restricted'
+                }
+            }
             try {
                 $cpuTime = $process.TotalProcessorTime
                 if ($null -ne $cpuTime) { $cpu = $cpuTime.TotalSeconds }
@@ -152,6 +162,7 @@ function Get-WpbdProcessSnapshot {
                 Id = $id; Name = $name; StartUtc = $started
                 ElapsedSeconds = $elapsed; TotalCpuSeconds = $cpu
                 PrivateBytes = $private; WorkingSetBytes = $workingSet
+                MetadataAccess = $metadataAccess
             }
         } catch {
             Add-WpbdCollectionError $Errors 'Processes' 'InstanceUnavailable' 'An exiting or inaccessible process could not be sampled.'
@@ -179,6 +190,8 @@ function Convert-WpbdProcess {
         CpuPercent = Get-WpbdRatio $cpu ($elapsed * $LogicalProcessorCount) 100
         PrivateBytes = $After.PrivateBytes
         WorkingSetBytes = $After.WorkingSetBytes
+        TotalCpuSeconds = $After.TotalCpuSeconds
+        MetadataAccess = $After.MetadataAccess
     }
 }
 
@@ -490,7 +503,7 @@ function Get-WpbdMetrics {
     $postSampling.Stop()
 
     [pscustomobject]@{
-        SchemaVersion = '0.2'
+        SchemaVersion = '0.3'
         Configuration = [pscustomobject]@{
             DurationSeconds = $DurationSeconds; SampleIntervalSeconds = $SampleIntervalSeconds
             ExpectedSamples = $sampleCount; ProcessorCounterClass = $processorState.SelectedClass

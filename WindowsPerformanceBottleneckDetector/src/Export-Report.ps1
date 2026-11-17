@@ -191,15 +191,43 @@ function ConvertTo-WpbdHtmlReport {
             'Private peak (MiB)', 'Working set peak (MiB)', 'Executable path') $rows
     }
     $applicationRows = @(foreach ($application in $Diagnostic.Applications) {
-        ,@($application.Name, $application.Processes.Count,
+        ,@($application.Name, $application.UniqueIdentities, $application.ConcurrentProcesses.Maximum, $application.Observations,
             (Format-WpbdNumber $application.PrivateBytes.Maximum 1MB),
             (Format-WpbdNumber $application.WorkingSetBytes.Maximum 1MB),
-            $application.PrivateBytes.Count, $application.WorkingSetBytes.Count, $application.Key)
+            (Format-WpbdNumber $application.CpuPercent.Average), (Format-WpbdNumber $application.CpuPercent.Maximum),
+            $application.AttributionConfidence, $application.PrivateBytes.Count, $application.WorkingSetBytes.Count, $application.Key)
     })
     $applicationTable = if ($applicationRows.Count) {
-        New-WpbdHtmlTable @('Application', 'Captured entries', 'Private peak (MiB)', 'Working set peak (MiB)',
+        New-WpbdHtmlTable @('Application or category', 'Unique identities', 'Peak concurrent', 'Observations',
+            'Private peak (MiB)', 'Working set peak (MiB)', 'Average CPU (%)', 'Peak CPU (%)', 'Attribution confidence',
             'Complete private samples', 'Complete working set samples', 'Ownership key') $applicationRows
     } else { '<p>Application ownership measurements unavailable.</p>' }
+    $attribution = $Diagnostic.AttributionQuality
+    $attributionRows = @(
+        ,@('Unique identities', $attribution.UniqueIdentities)
+        ,@('Distinct PIDs', $attribution.UniquePids)
+        ,@('Verified identities', $attribution.VerifiedIdentities)
+        ,@('Provisional identities', $attribution.ProvisionalIdentities)
+        ,@('Total observations', $attribution.Observations)
+        ,@('Peak concurrently captured', $attribution.ConcurrentProcesses.Maximum)
+        ,@('Identified application processes', $attribution.IdentifiedApplications)
+        ,@('Windows system processes', $attribution.WindowsSystemProcesses)
+        ,@('Restricted metadata (can overlap a known process type)', $attribution.RestrictedProcesses)
+        ,@('Protected or restricted ownership', $attribution.RestrictedOwnership)
+        ,@('Unattributed application processes', $attribution.UnattributedApplications)
+        ,@('Unknown process ownership', $attribution.UnknownOwnership)
+        ,@('Successfully attributed identities (%)', (Format-WpbdNumber $attribution.AttributedPercent))
+        ,@('Unattributed private memory peak (MiB)', (Format-WpbdNumber $attribution.UnattributedPrivateBytes.Maximum 1MB))
+        ,@('Complete unattributed memory samples', $attribution.UnattributedPrivateBytes.Count)
+    )
+    $attributionTable = New-WpbdHtmlTable @('Attribution quality', 'Value') $attributionRows
+    $identityRows = @(foreach ($process in $stats.Processes.All) {
+        ,@($process.Name, $process.Id, $process.ParentId, $process.StartUtc, $process.IdentityStatus, $process.Observations,
+            $process.AttributionCategory, $process.AttributionConfidence, $process.MetadataAccess,
+            ($process.Services -join ', '), $process.Path, $process.OwnershipEvidence)
+    })
+    $identityTable = New-WpbdHtmlTable @('Process', 'PID', 'Parent PID', 'Start UTC', 'Identity status', 'Observations',
+        'Attribution category', 'Attribution confidence', 'Metadata access', 'Services', 'Path', 'Evidence') $identityRows
     $eventRows = @(foreach ($event in $Diagnostic.CriticalSystemEvents) {
         ,@($event.TimestampUtc, $event.Provider, $event.EventId, $event.RecordId)
     })
@@ -287,7 +315,9 @@ $validTable
 <section><h2>Memory</h2><p>$memoryCategory</p><p>Hard page reads and page input can include file-backed data. Page output and page-list measurements provide context.</p>$memory</section>
 <section><h2>Storage</h2><p>Latency averages are weighted by completed operations. Latency can be unavailable when no operations complete in the interval.</p>
 $($disks -join "`n")<h3>Fixed-volume capacity</h3>$drives</section>
-<section><h2>Applications</h2><p>Application peaks are maxima of per-sample sums. Working set sums include shared pages. Unattributed entries lack verified ownership. Private bytes and working set use different accounting from Task Manager private resident memory.</p>$applicationTable</section>
+<section><h2>Attribution quality</h2><p>Verified identities use PID and creation time. Provisional identities track matching consecutive PID/name sightings. An undetected replacement between captures can share a provisional identity. Ownership confidence is independent of the quality of memory measurements. Unattributed memory combines all processes outside identified application and Windows system categories in each sample.</p>$attributionTable
+<details><summary>All process identities and ownership evidence</summary>$identityTable</details></section>
+<section><h2>Applications</h2><p>Application peaks are maxima of per-sample sums. Average CPU is the mean of complete measured sample totals. Counts distinguish identities across the diagnostic, captured observations and peak concurrent membership. Working set sums include shared pages. Private bytes and working set use different accounting from Task Manager private resident memory.</p>$applicationTable</section>
 <section><h2>Top processes</h2><p>CPU percentages are relative to total machine capacity. Average CPU uses observed intervals for each process. Private bytes measure process-private allocation. Working set measures pages resident at the sample time and can include shared pages. All captured process instances are available in JSON Statistics.Processes.All and the desktop All Processes view.</p>
 $($processTables -join "`n")</section>
 <section><h2>Recent critical System events</h2><p class="meta">Up to 10 events from the last 24 hours.</p>$events</section>
