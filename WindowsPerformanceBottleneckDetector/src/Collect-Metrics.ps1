@@ -370,7 +370,9 @@ function Get-WpbdMetrics {
     [CmdletBinding()]
     param(
         [ValidateRange(1, 3600)][int] $DurationSeconds = 60,
-        [ValidateRange(1, 3600)][int] $SampleIntervalSeconds = 2
+        [ValidateRange(1, 3600)][int] $SampleIntervalSeconds = 2,
+        [scriptblock] $OnSample,
+        [Threading.WaitHandle] $CancellationSignal
     )
     if ($SampleIntervalSeconds -gt $DurationSeconds) {
         throw 'SampleIntervalSeconds must be less than or equal to DurationSeconds.'
@@ -378,6 +380,7 @@ function Get-WpbdMetrics {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         throw 'Live WPBD collection requires Windows.'
     }
+    if ($CancellationSignal -and $CancellationSignal.WaitOne(0)) { throw [OperationCanceledException]::new() }
 
     $errors = [ordered]@{}
     $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -394,6 +397,7 @@ function Get-WpbdMetrics {
     $sampleCount = [int] [Math]::Ceiling($DurationSeconds / $SampleIntervalSeconds)
     $activity = 'Windows performance diagnostic'
     try {
+        if ($CancellationSignal -and $CancellationSignal.WaitOne(0)) { throw [OperationCanceledException]::new() }
         Write-Progress -Activity $activity -Status 'Collecting baseline' -PercentComplete 0
         $before = Get-WpbdSnapshot $clock $errors $processorState -Baseline
         $baselineTiming = [pscustomobject]@{
@@ -406,7 +410,12 @@ function Get-WpbdMetrics {
         for ($slot = 1; $slot -le $sampleCount; $slot++) {
             $target = [Math]::Min($slot * $SampleIntervalSeconds, $DurationSeconds)
             $remaining = $target - ($clock.Elapsed.TotalSeconds - $origin)
-            if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int] [Math]::Ceiling($remaining * 1000)) }
+            if ($CancellationSignal) {
+                $wait = [int] [Math]::Max(0, [Math]::Ceiling($remaining * 1000))
+                if ($CancellationSignal.WaitOne($wait)) { throw [OperationCanceledException]::new() }
+            } elseif ($remaining -gt 0) {
+                Start-Sleep -Milliseconds ([int] [Math]::Ceiling($remaining * 1000))
+            }
             $decision = Get-WpbdSamplingSlot $slot $sampleCount ($clock.Elapsed.TotalSeconds - $origin) `
                 $SampleIntervalSeconds $DurationSeconds $previousWorkEnd
             if ($null -ne $decision.Missed) {
@@ -459,6 +468,9 @@ function Get-WpbdMetrics {
                 ProviderSeconds = $after.ProviderSeconds
             }
             $samples.Add($sample)
+            if ($OnSample) { $null = & $OnSample $sample $samples.Count $sampleCount }
+            if ($CancellationSignal -and $CancellationSignal.WaitOne(0)) { throw [OperationCanceledException]::new() }
+            $previousWorkEnd = $clock.Elapsed.TotalSeconds - $origin
             $before = $after
         }
     } finally {
@@ -469,8 +481,10 @@ function Get-WpbdMetrics {
     $postSampling = [Diagnostics.Stopwatch]::StartNew()
     Write-Verbose 'Reading drive capacity and recent critical events after performance sampling.'
     $paths = Get-WpbdProcessPaths $before.Processes $errors
+    if ($CancellationSignal -and $CancellationSignal.WaitOne(0)) { throw [OperationCanceledException]::new() }
     $drives = @(Get-WpbdDrives $errors)
     $events = @(Get-WpbdCriticalEvents $errors)
+    if ($CancellationSignal -and $CancellationSignal.WaitOne(0)) { throw [OperationCanceledException]::new() }
     $postSampling.Stop()
 
     [pscustomobject]@{

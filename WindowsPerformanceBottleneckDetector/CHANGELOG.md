@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- Added a .NET 10 WPF application with live CPU, memory and disk charts, a sample inspector, structured findings and a sortable processes table.
+- Added local report history, JSON report loading for schemas 0.1 and 0.2, paired HTML opening and separate application logs.
+- Added a versioned JSON progress stream and cooperative cancellation for a private Windows PowerShell worker. The existing CLI and report schema remain compatible.
+- Packaged the diagnostic engine beside the desktop executable for development and self-contained Windows x64 deployment.
+- Added .NET regression and live Windows integration checks for report parsing, streaming, completion and cancellation.
+
 ## 0.2.0
 
 - Added graduated memory assessments with separate advisories, OS-visible headroom thresholds and same-sample corroboration. Added page-out and page-list context using the existing memory query.

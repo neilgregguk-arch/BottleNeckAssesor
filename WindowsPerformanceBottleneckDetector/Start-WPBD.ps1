@@ -24,8 +24,8 @@ if (-not $NoReport) {
     $OutputPath = [IO.Path]::GetFullPath($OutputPath)
 }
 
-Import-Module "$PSScriptRoot/src/WPBD.psm1" -ErrorAction Stop
-Write-Host "WPBD 0.2 | Sampling for $DurationSeconds seconds at $SampleIntervalSeconds-second intervals."
+Import-Module "$PSScriptRoot/src/WPBD.psm1" -Force -ErrorAction Stop
+Write-Host "WPBD 0.3 | Sampling for $DurationSeconds seconds at $SampleIntervalSeconds-second intervals."
 $metrics = Get-WpbdMetrics -DurationSeconds $DurationSeconds -SampleIntervalSeconds $SampleIntervalSeconds
 Write-Host 'Analysing measurements...'
 $diagnostic = Get-WpbdAnalysis -Metrics $metrics

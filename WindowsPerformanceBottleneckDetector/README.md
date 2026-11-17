@@ -1,8 +1,51 @@
 # Windows Performance Bottleneck Detector
 
-WPBD 0.2 is a local, read-only diagnostic engine for Windows 10 and Windows 11. It samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. It runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. The engine requires no agent, external PowerShell module or internet connection.
+WPBD 0.3 adds a Windows desktop app to the local, read-only diagnostic engine. WPBD samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. The engine runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. It requires no agent, external PowerShell module or internet connection.
 
-## Run a diagnostic
+## Desktop app
+
+### Build and run
+
+From the project directory containing `Start-WPBD.ps1`, use the .NET 10 SDK on Windows.
+
+```powershell
+dotnet build .\desktop\WPBD.Desktop\WPBD.Desktop.csproj -c Release
+.\desktop\WPBD.Desktop\bin\Release\net10.0-windows\WPBD.Desktop.exe
+```
+
+The desktop app targets Windows 11 and Windows 10 editions supported by .NET 10. Framework-dependent builds require the .NET 10 Desktop Runtime. The app runs with the current user's permissions and needs write access to the report directory. [Microsoft .NET Windows support](https://learn.microsoft.com/dotnet/core/install/windows#supported-versions)
+
+### Publish and deploy
+
+```powershell
+dotnet publish .\desktop\WPBD.Desktop\WPBD.Desktop.csproj -c Release -r win-x64 --self-contained true -o .\desktop\artifacts\win-x64
+.\desktop\artifacts\win-x64\WPBD.Desktop.exe
+```
+
+Copy the entire `win-x64` output folder to the target workstation, including its `Engine` subdirectory, then double-click `WPBD.Desktop.exe`. The published folder includes the .NET runtime. The target uses Windows PowerShell 5.1 supplied by Windows. Development output and published output both resolve the engine relative to the executable.
+
+### Diagnostic workflow
+
+1. Choose 30 seconds, 60 seconds, 2 minutes or 5 minutes, and a 1-, 2-, 5- or 10-second interval. Reports default to `%LOCALAPPDATA%\WPBD\Reports`. Use **Choose folder** to direct reports to an existing writable location.
+2. Select **Start Diagnostic**. The Dashboard shows completed samples, elapsed sample time, live CPU and memory, available RAM, and disk activity and latency. Graphs use elapsed sample times from the engine. Breaks indicate unavailable measurements or skipped slots. Use the slider or arrow keys on the focused slider to inspect a sample across all four graphs. The storage chart uses the highest measured read or write latency across disks. Expand the activity row for per-disk values.
+3. Review **Findings** after collection. Severity, advisory status and confidence are written out. The coverage summary identifies incomplete evidence. Use **Processes** to sort the engine's ranked process rows by CPU, private memory or working set.
+4. Use **Reports** to open the paired HTML report, open the selected reports folder, load a history entry or browse to a saved JSON report. History lists WPBD JSON files in the selected folder. The app can load schema 0.1 and 0.2 reports. A missing HTML companion leaves JSON review available.
+5. Select **Cancel Diagnostic** during collection or analysis. The app retains the partial timeline for inspection and presents a cancelled status. Once report writing begins, export is allowed to finish.
+
+### Integration and troubleshooting
+
+`WPBD.Desktop` contains the WPF views, chart control and view model. `WPBD.Core` handles validated configuration, asynchronous worker execution, report parsing and history. The PowerShell worker imports the packaged module by absolute path into a fresh profile-free process. The desktop app passes arguments directly to the Windows PowerShell executable. The worker emits one UTF-8 JSON object per line with protocol number `1`, a `Type` and `Data`. Event types are `phase`, `sample`, `completed`, `cancelled` and `error`. The sample events contain a projection from the same measurements written to the report. The JSON report remains schema 0.2 and supplies the completed assessment.
+
+Cancellation signals a private, session-local Windows event checked by the worker. If a worker fails to respond to cancellation within 15 seconds before export, WPBD can stop that specific child process. Report export is handled by the original PowerShell engine. App logs are stored in `%LOCALAPPDATA%\WPBD\Logs` and opened using **Logs**. Errors show a short message and expandable technical details.
+
+- **Scripts blocked**. Check organisational policy. Where allowed, **Allow process-only script policy override** applies `-ExecutionPolicy Bypass` to the worker for that run. Group Policy takes precedence.
+- **Engine missing**. Copy the entire publish folder from the same build.
+- **Measurement unavailable**. See **Findings** for coverage and collection errors. Protected processes or Windows providers can limit results.
+- **Invalid or missing report**. Browse to a complete WPBD JSON file. To open HTML, keep the generated HTML with the matching basename beside it.
+
+The deployment described here targets x64. Read-only access to counters, process details and logs depends on Windows permissions and provider availability. Windows 10 and physical display scaling outside the development workstation need deployment validation.
+
+## Run a diagnostic from Windows PowerShell
 
 Open Windows PowerShell, switch to the directory containing `Start-WPBD.ps1`, then run the command while the slowdown is occurring.
 
@@ -120,3 +163,17 @@ Invoke-Pester -Script .\tests\WPBD.Tests.ps1
 ```
 
 If Pester is absent, obtain Pester 3.4.0 through your approved PowerShell module source and rerun the commands. Test setup uses synthetic inputs. The diagnostic engine uses live providers for collection.
+
+The .NET regression runner checks configuration, versioned reports, progress, advisories, missing data, filesystem history and errors without external test packages.
+
+```powershell
+dotnet run --project .\desktop\WPBD.Tests\WPBD.Tests.csproj -c Release
+```
+
+To verify actual Windows collection and cancellation, publish the app first, then pass the published engine folder to the runner. The live checks write a report pair to a temporary folder.
+
+```powershell
+dotnet run --project .\desktop\WPBD.Tests\WPBD.Tests.csproj -c Release -- --live .\desktop\artifacts\win-x64\Engine
+```
+
+Where organisational policy permits a process-only script policy override, append `--allow-process-policy-override` to the live test command.
