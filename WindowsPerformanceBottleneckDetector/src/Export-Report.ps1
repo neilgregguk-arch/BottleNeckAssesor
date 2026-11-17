@@ -1,0 +1,254 @@
+function ConvertTo-WpbdHtmlText {
+    param($Value)
+    [Net.WebUtility]::HtmlEncode([string] $Value)
+}
+
+function Format-WpbdNumber {
+    param($Value, [double] $Divisor = 1)
+    if ($null -eq $Value) { return 'Unavailable' }
+    '{0:N2}' -f ([double] $Value / $Divisor)
+}
+
+function New-WpbdHtmlTable {
+    param([string[]] $Headers, $Rows)
+    $html = New-Object Text.StringBuilder
+    [void] $html.Append('<div class="table-wrap"><table><thead><tr>')
+    foreach ($header in $Headers) { [void] $html.Append("<th scope='col'>$(ConvertTo-WpbdHtmlText $header)</th>") }
+    [void] $html.Append('</tr></thead><tbody>')
+    foreach ($row in $Rows) {
+        [void] $html.Append('<tr>')
+        foreach ($cell in $row) { [void] $html.Append("<td>$(ConvertTo-WpbdHtmlText $cell)</td>") }
+        [void] $html.Append('</tr>')
+    }
+    [void] $html.Append('</tbody></table></div>')
+    $html.ToString()
+}
+
+function New-WpbdStatisticsTable {
+    param($Statistics, $Fields)
+    $rows = @(foreach ($field in $Fields) {
+        $stat = $Statistics.($field[0])
+        $divisor = $field[2]
+        ,@($field[1], (Format-WpbdNumber $stat.Average $divisor), (Format-WpbdNumber $stat.Minimum $divisor),
+            (Format-WpbdNumber $stat.Maximum $divisor), $stat.Count)
+    })
+    New-WpbdHtmlTable @('Measurement', 'Average', 'Minimum', 'Maximum', 'Samples') $rows
+}
+
+function ConvertTo-WpbdHtmlReport {
+    param($Diagnostic)
+    $system = $Diagnostic.System
+    $stats = $Diagnostic.Statistics
+    $computer = ConvertTo-WpbdHtmlText $system.ComputerName
+    $assessment = ConvertTo-WpbdHtmlText $Diagnostic.Assessment.Summary
+    $start = ConvertTo-WpbdHtmlText $Diagnostic.StartedUtc
+    $end = ConvertTo-WpbdHtmlText $Diagnostic.CompletedUtc
+    $duration = Format-WpbdNumber $Diagnostic.ActualDurationSeconds
+    $sampleCount = $Diagnostic.Samples.Count
+    $expected = ConvertTo-WpbdHtmlText $Diagnostic.Configuration.ExpectedSamples
+    $systemRows = @(
+        ,@('Windows', ("$($system.WindowsCaption) $($system.WindowsVersion) (build $($system.WindowsBuild))").Trim())
+        ,@('Hardware', ("$($system.Manufacturer) $($system.Model)").Trim())
+        ,@('Processor', (($system.Processors | ForEach-Object { $_.Name }) -join ', '))
+        ,@('Logical processors', $system.LogicalProcessorCount)
+        ,@('Installed RAM (GiB)', (Format-WpbdNumber $system.InstalledMemoryBytes 1GB))
+        ,@('OS-visible RAM (GiB)', (Format-WpbdNumber $system.VisibleMemoryBytes 1GB))
+        ,@('Last boot (UTC)', $system.LastBootUtc)
+        ,@('Uptime (hours)', (Format-WpbdNumber $system.UptimeSeconds 3600))
+        ,@('PowerShell', $system.PowerShellVersion)
+    )
+    foreach ($row in $systemRows) {
+        if ([string]::IsNullOrWhiteSpace([string] $row[1]) -or $row[1] -eq '(build )') { $row[1] = 'Unavailable' }
+    }
+    $systemTable = New-WpbdHtmlTable @('System information', 'Value') $systemRows
+    $findings = foreach ($finding in $Diagnostic.Findings) {
+        $category = ConvertTo-WpbdHtmlText $finding.Category
+        $severity = ConvertTo-WpbdHtmlText $finding.Severity
+        $confidence = ConvertTo-WpbdHtmlText $finding.Confidence
+        $observed = ConvertTo-WpbdHtmlText $finding.Observed
+        $explanation = ConvertTo-WpbdHtmlText $finding.Explanation
+        $next = ConvertTo-WpbdHtmlText $finding.SuggestedInvestigation
+        @"
+<article class="finding"><h3>$category</h3><p class="meta">$severity &middot; $confidence confidence</p>
+<dl><dt>Observed</dt><dd>$observed</dd><dt>Interpretation</dt><dd>$explanation</dd>
+<dt>Suggested investigation</dt><dd>$next</dd></dl></article>
+"@
+    }
+    $cpu = New-WpbdStatisticsTable $stats (,@('Cpu', 'Total CPU utilisation (%)', 1))
+    $cpuThreshold = ConvertTo-WpbdHtmlText $Diagnostic.Thresholds.CpuPercent
+    $highCpu = Format-WpbdNumber $stats.Cpu.PercentAboveThreshold
+    $memory = New-WpbdStatisticsTable $stats.Memory @(
+        @('AvailableBytes', 'Available physical memory (MiB)', 1MB),
+        @('UsedPercent', 'Physical memory utilisation (%)', 1),
+        @('CommittedBytes', 'Committed memory (GiB)', 1GB),
+        @('CommitLimitBytes', 'Commit limit (GiB)', 1GB),
+        @('CommitPercent', 'Commit utilisation (%)', 1),
+        @('PageReadsPerSecond', 'Page reads/s', 1),
+        @('PagesInputPerSecond', 'Pages input/s', 1)
+    )
+    $disks = foreach ($disk in $stats.Disks) {
+        "<h3>$(ConvertTo-WpbdHtmlText $disk.Name)</h3>"
+        New-WpbdStatisticsTable $disk @(
+            @('ActivePercent', 'Active time (%)', 1),
+            @('ReadsPerSecond', 'Reads/s', 1),
+            @('WritesPerSecond', 'Writes/s', 1),
+            @('ReadBytesPerSecond', 'Read throughput (MiB/s)', 1MB),
+            @('WriteBytesPerSecond', 'Write throughput (MiB/s)', 1MB),
+            @('ReadLatencyMs', 'Read latency (ms)', 1),
+            @('WriteLatencyMs', 'Write latency (ms)', 1),
+            @('QueueLength', 'Current queue length (requests)', 1)
+        )
+    }
+    if (-not $disks) { $disks = '<p>Physical disk measurements unavailable.</p>' }
+    $driveRows = @(foreach ($drive in $stats.Drives) {
+        ,@($drive.Name, $drive.Label, (Format-WpbdNumber $drive.CapacityBytes 1GB),
+            (Format-WpbdNumber $drive.FreeBytes 1GB), (Format-WpbdNumber $drive.FreePercent))
+    })
+    $drives = if ($driveRows.Count) {
+        New-WpbdHtmlTable @('Volume', 'Label', 'Capacity (GiB)', 'Free (GiB)', 'Free (%)') $driveRows
+    } else { '<p>Fixed-volume capacity unavailable.</p>' }
+    $processTables = foreach ($ranking in @(
+        @('AverageCpuPercent', 'Average CPU'),
+        @('PeakCpuPercent', 'Peak CPU'),
+        @('CumulativeCpuSeconds', 'CPU time during sampling'),
+        @('PeakPrivateBytes', 'Peak private memory'),
+        @('PeakWorkingSetBytes', 'Peak working set')
+    )) {
+        $rows = @(foreach ($process in $stats.Processes.Leaders.($ranking[0])) {
+            $path = if ($process.Path) { $process.Path } else { 'Unavailable' }
+            ,@($process.Name, $process.Id, (Format-WpbdNumber $process.AverageCpuPercent),
+                (Format-WpbdNumber $process.PeakCpuPercent), (Format-WpbdNumber $process.CumulativeCpuSeconds),
+                (Format-WpbdNumber $process.PeakPrivateBytes 1MB), (Format-WpbdNumber $process.PeakWorkingSetBytes 1MB), $path)
+        })
+        "<h3>$($ranking[1])</h3>"
+        if ($rows.Count -eq 0) { '<p>Measurements unavailable.</p>'; continue }
+        New-WpbdHtmlTable @('Process', 'PID', 'Average CPU (%)', 'Peak CPU (%)', 'CPU time (s)',
+            'Private peak (MiB)', 'Working set peak (MiB)', 'Executable path') $rows
+    }
+    $eventRows = @(foreach ($event in $Diagnostic.CriticalSystemEvents) {
+        ,@($event.TimestampUtc, $event.Provider, $event.EventId, $event.RecordId)
+    })
+    $eventError = @($Diagnostic.CollectionErrors | Where-Object { $_.Source -eq 'System event log' }).Count -gt 0
+    $events = if ($eventError) { '<p>The System event log was unavailable.</p>' }
+    elseif ($eventRows.Count) { New-WpbdHtmlTable @('Time (UTC)', 'Provider', 'Event ID', 'Record ID') $eventRows }
+    else { '<p>No critical System events were returned.</p>' }
+    $gaps = if ($Diagnostic.Assessment.CoverageGaps.Count) {
+        '<ul>' + (($Diagnostic.Assessment.CoverageGaps | ForEach-Object {
+            "<li>$(ConvertTo-WpbdHtmlText $_)</li>"
+        }) -join '') + '</ul>'
+    } else { '<p>All assessment categories met the minimum coverage rules.</p>' }
+    $errorRows = @(foreach ($errorRecord in $Diagnostic.CollectionErrors) {
+        ,@($errorRecord.Source, $errorRecord.Code, $errorRecord.Count, $errorRecord.FirstSeenUtc,
+            $errorRecord.LastSeenUtc, $errorRecord.Message)
+    })
+    $collectionErrors = if ($errorRows.Count) {
+        New-WpbdHtmlTable @('Source', 'Code', 'Occurrences', 'First seen (UTC)', 'Last seen (UTC)', 'Details') $errorRows
+    } else { '<p>No collection errors recorded.</p>' }
+    $processCpuCount = $stats.Processes.InstancesWithCpuIntervals
+    $processCount = $stats.Processes.ObservedInstances
+    $missingPaths = $stats.Processes.InstancesWithMissingPath
+    $logicalCpuCount = @($Diagnostic.Samples.LogicalProcessors | Where-Object { $null -ne $_.Percent } |
+        Group-Object Name).Count
+    $logicalCpu = if ($logicalCpuCount) { "$logicalCpuCount logical processor counter instances with measurements in JSON." }
+    else { 'Per-logical-processor utilisation unavailable.' }
+    $trendRows = @(foreach ($sample in $Diagnostic.Samples) {
+        ,@($sample.TimestampUtc, (Format-WpbdNumber $sample.ElapsedSeconds),
+            (Format-WpbdNumber $sample.CpuTotalPercent), (Format-WpbdNumber $sample.Memory.AvailableBytes 1MB))
+    })
+    $trend = if ($trendRows.Count) {
+        New-WpbdHtmlTable @('Sample start (UTC)', 'Elapsed (s)', 'Total CPU (%)', 'Available RAM (MiB)') $trendRows
+    } else { '<p>Time series unavailable.</p>' }
+    @"
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WPBD report | $computer</title>
+<style>
+:root{color-scheme:light;font-family:system-ui,sans-serif;color:#152636;background:#eef2f5}
+body{max-width:76rem;margin:auto;padding:clamp(1rem,4vw,3rem);line-height:1.5}
+header,section{background:white;padding:clamp(1rem,3vw,2rem);margin-bottom:1rem;border:1px solid #d0dce5;border-radius:.6rem}
+h1,h2,h3,p{margin:0 0 .65rem} h1{font-size:clamp(1.5rem,4vw,2.25rem)}
+h2,h3{color:#193c58} h3{margin-top:1rem} .meta{color:#44596b}
+.assessment{font-size:1.2rem;font-weight:650} .finding{border-left:.25rem solid #277286;padding:.1rem 0 .1rem 1rem;margin:1rem 0}
+dl{margin:.5rem 0} dt{font-weight:650} dd{margin:0 0 .6rem}
+.table-wrap{overflow-x:auto;margin:.65rem 0 1rem} table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{text-align:left;vertical-align:top;padding:.45rem .65rem;border-bottom:1px solid #d0dce5;overflow-wrap:anywhere}
+th{background:#e9f1f6} tbody tr:nth-child(even){background:#f5f8fa} summary{cursor:pointer;font-weight:650}
+@media print{body{padding:0;background:white} section,header{padding:.5rem;border:0} tr,.finding{break-inside:avoid}}
+</style>
+</head>
+<body>
+<header>
+<h1>Windows Performance Bottleneck Detector</h1>
+<p><strong>$computer</strong> &middot; Version 0.1</p>
+<p class="meta">$start to $end &middot; $duration s &middot; $sampleCount of $expected scheduled samples</p>
+<p class="assessment">$assessment</p>
+</header>
+<main>
+<section><h2>Findings</h2>$($findings -join "`n")</section>
+<section><h2>Computer</h2>$systemTable</section>
+<section><h2>CPU</h2>$cpu<p>Samples above $cpuThreshold% utilisation as a percentage of usable samples &middot; $highCpu</p><p>$logicalCpu</p></section>
+<section><h2>Memory</h2>$memory</section>
+<section><h2>Storage</h2><p>Latency averages are weighted by completed operations. Latency can be unavailable when no operations complete in the interval.</p>
+$($disks -join "`n")<h3>Fixed-volume capacity</h3>$drives</section>
+<section><h2>Top processes</h2><p>CPU percentages are relative to total machine capacity. Average CPU uses observed intervals for each process. Private bytes measure process-private allocation. Working set measures pages resident at the sample time and can include shared pages.</p>
+$($processTables -join "`n")</section>
+<section><h2>Recent critical System events</h2><p class="meta">Up to 10 events from the last 24 hours.</p>$events</section>
+<section><h2>Measurement availability</h2>$gaps<p>Statistics tables show how many samples contributed to each measurement.</p>
+<p>Process CPU intervals were measured for $processCpuCount of $processCount observed entries. Executable paths were unavailable for $missingPaths entries.</p>
+<h3>Collection errors</h3>$collectionErrors</section>
+<section><details><summary>Sample timeline</summary>$trend</details></section>
+</main>
+</body>
+</html>
+"@
+}
+
+function Export-WpbdReport {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [psobject] $Diagnostic,
+        [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string] $OutputPath
+    )
+    $ErrorActionPreference = 'Stop'
+    if ([string]::IsNullOrWhiteSpace($OutputPath)) { throw 'OutputPath must be a directory path.' }
+    $provider = $null
+    $drive = $null
+    $directory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
+        $OutputPath, [ref] $provider, [ref] $drive
+    )
+    if ($provider.Name -ne 'FileSystem') { throw 'OutputPath must be a filesystem directory path.' }
+    $computer = ([string] $Diagnostic.System.ComputerName) -replace '[^A-Za-z0-9_-]', '_'
+    if (-not $computer) { $computer = 'computer' }
+    $start = [DateTimeOffset]::Parse($Diagnostic.StartedUtc, [Globalization.CultureInfo]::InvariantCulture)
+    $stamp = $start.ToUniversalTime().ToString("yyyyMMdd'T'HHmmssfffffff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+    $unique = [Guid]::NewGuid().ToString('N').Substring(0, 12)
+    $base = Join-Path $directory "WPBD-$computer-$stamp-$unique"
+    $paths = [pscustomobject]@{ JsonPath = "$base.json"; HtmlPath = "$base.html" }
+    $json = ConvertTo-Json -InputObject $Diagnostic -Depth 16 -ErrorAction Stop
+    $html = ConvertTo-WpbdHtmlReport $Diagnostic
+    $encoding = New-Object Text.UTF8Encoding($false)
+    [void] [IO.Directory]::CreateDirectory($directory)
+    $created = New-Object 'System.Collections.Generic.List[string]'
+    $success = $false
+    try {
+        foreach ($report in @(@($paths.JsonPath, $json), @($paths.HtmlPath, $html))) {
+            $stream = [IO.File]::Open($report[0], [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            $created.Add($report[0])
+            try {
+                $bytes = $encoding.GetBytes($report[1])
+                $stream.Write($bytes, 0, $bytes.Length)
+            } finally {
+                $stream.Dispose()
+            }
+        }
+        $success = $true
+        $paths
+    } finally {
+        if (-not $success) {
+            foreach ($file in $created) { [IO.File]::Delete($file) }
+        }
+    }
+}
