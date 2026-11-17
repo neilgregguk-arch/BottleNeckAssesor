@@ -4,7 +4,7 @@ WPBD 0.4 packages the Windows desktop app as a single installer. WPBD samples CP
 
 ## Install WPBD
 
-Copy `WPBD-Setup-0.4.0-x64.exe` to a compatible workstation and double-click it. Setup installs the app for the current user under `%LOCALAPPDATA%\Programs\WPBD`, adds a Start menu shortcut and offers an optional desktop shortcut. Select **Launch Windows Performance Bottleneck Detector** at the end of Setup, or open WPBD from Start.
+Copy `WPBD-Setup-0.4.2-x64.exe` to a compatible workstation and double-click it. Setup installs the app for the current user under `%LOCALAPPDATA%\Programs\WPBD`, adds a Start menu shortcut and offers an optional desktop shortcut. Select **Launch Windows Performance Bottleneck Detector** at the end of Setup, or open WPBD from Start.
 
 The installer bundles the self-contained .NET 10 desktop runtime and diagnostic scripts. The target needs native x64 Windows 11 or a Windows 10 edition supported by .NET 10, Windows PowerShell 5.1, and write access to the user's local application data. Setup works offline and runs with current-user permissions. Your organisation's application-control and script policies still apply. [Microsoft .NET Windows support](https://learn.microsoft.com/dotnet/core/install/windows#supported-versions)
 
@@ -15,7 +15,7 @@ To remove WPBD, close it and select **Uninstall** in Windows **Settings > Apps >
 The unsigned installer may trigger a Microsoft Defender SmartScreen warning. Verify it against the SHA-256 published by your distributor and follow your organisation's approval process. With the setup file and its checksum file in the current folder, a technician can verify the bytes with:
 
 ```powershell
-$name = 'WPBD-Setup-0.4.0-x64.exe'
+$name = 'WPBD-Setup-0.4.2-x64.exe'
 $expected = ((Get-Content -LiteralPath ".\$name.sha256" -Raw).Trim() -split '\s+', 2)[0]
 $actual = (Get-FileHash -LiteralPath ".\$name" -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw 'Installer SHA-256 mismatch.' }
@@ -30,12 +30,12 @@ Use the .NET 10 SDK and Inno Setup 6.3 or newer on a Windows build machine. From
 .\installer\Build-Installer.ps1
 ```
 
-Use `-ISCCPath 'C:\path\to\ISCC.exe'` if the compiler is in a custom location. The build publishes into a fresh staging directory, checks the runtime and engine payload, compiles the EXE and writes a `.sha256` file under `installer\artifacts`. An initial build may need NuGet access to restore the x64 runtime packs. Set `VERSION` for each release. For an isolated upgrade test, use `-VersionOverride 0.4.1 -OutputDirectory <test-output-folder>` and keep the installer AppId unchanged. [Inno Setup downloads](https://jrsoftware.org/inno-setup/downloads)
+Use `-ISCCPath 'C:\path\to\ISCC.exe'` if the compiler is in a custom location. The build publishes into a fresh staging directory, checks the runtime and engine payload, compiles the EXE and writes a `.sha256` file under `installer\artifacts`. An initial build may need NuGet access to restore the x64 runtime packs. Set `VERSION` for each release. For an isolated upgrade test, use `-VersionOverride 0.4.3 -OutputDirectory <test-output-folder>` and keep the installer AppId unchanged. [Inno Setup downloads](https://jrsoftware.org/inno-setup/downloads)
 
 For production signing, use an organisation-issued Authenticode code-signing certificate and the Windows SDK SignTool. Sign the finished installer and regenerate its checksum from the signed bytes. Use the organisation's certificate thumbprint and RFC 3161 timestamp service. [Microsoft SignTool reference](https://learn.microsoft.com/windows/win32/seccrypto/signtool)
 
 ```powershell
-$setup = '.\installer\artifacts\WPBD-Setup-0.4.0-x64.exe'
+$setup = '.\installer\artifacts\WPBD-Setup-0.4.2-x64.exe'
 signtool sign /sha1 'CERTIFICATE_THUMBPRINT' /fd SHA256 /tr 'RFC3161_TIMESTAMP_URL' /td SHA256 $setup
 if ($LASTEXITCODE -ne 0) { throw 'Installer signing failed.' }
 signtool verify /pa $setup
@@ -45,6 +45,20 @@ $hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvaria
 ```
 
 ## Desktop app
+
+### Processes and applications
+
+Version 0.4.2 provides **All Processes**, searchable by name, PID, path or application. Filters show attributed, unattributed, CPU-measured or memory-measured entries. All numeric columns sort by measured value. Verified identities use PID and process start time. Entries with inaccessible start times remain separate sightings. Process rows show individual peaks across their observed window.
+
+**Applications** groups identical executable paths and WebView2 descendants whose parent identities establish a chain to a host executable. Microsoft Store Teams is labelled Microsoft Teams when its executable is ms-teams.exe inside an MSTeams package path. Other hosts keep their executable names and paths. A command-line WebView host executable hint can reject inconsistent ownership. A name, PID, WebView2 runtime location or user-data folder alone cannot establish ownership. Expand a group for its processes and evidence.
+
+Parent metadata is captured once before sampling and once after it. PID and creation timestamps must match, with microsecond precision to accommodate CIM timestamps. Parent creation must precede child creation. Processes that exit between inventories, restricted paths, missing parents, ambiguous ancestry and unverified identities remain **Unattributed**. The complete command line is queried transiently and only the WebView host executable hint is retained. Process metadata may expose executable paths and host names in reports.
+
+Application memory totals sum members present in each sample, then calculate the maximum of those aligned totals. A missing measurement from any present member makes that metric's total unavailable for the sample. Complete-sample counts appear in the Applications view. These totals are based on sequential process reads within a capture, so they are not an atomic Windows memory snapshot. Processes that start and exit entirely between captures remain unobserved.
+
+Private bytes are committed private allocation and can include paged-out memory. Working set includes shared and private resident pages, so summing working sets can count shared pages repeatedly. Task Manager commonly displays private resident working-set accounting and can use different grouping and refresh timing. WPBD does not collect private resident working set, so its application totals may differ from Task Manager's memory column. [Microsoft memory accounting guidance](https://learn.microsoft.com/en-us/troubleshoot/windows-server/performance/troubleshoot-application-service-memory-leaks), [WebView2 process model](https://learn.microsoft.com/microsoft-edge/webview2/concepts/process-model)
+
+Report schema remains 0.2 with additive optional fields: `Statistics.Processes.All`, `ProcessMetadata`, and `Applications`. Applications include member processes, per-sample totals, measurement coverage and aggregate statistics. Existing leader fields remain available. Older 0.1 and 0.2 reports reconstruct All Processes from their raw samples. Ownership remains unavailable for older reports lacking verified metadata. Diagnostic classification thresholds are unchanged.
 
 ### Build and run
 

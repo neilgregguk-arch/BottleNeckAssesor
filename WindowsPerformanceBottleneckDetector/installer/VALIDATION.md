@@ -24,3 +24,9 @@ Verified on 17 November 2026 on the Windows 11 development workstation. Compilat
 Windows Sandbox is unavailable on this host. A clean workstation without developer tools, Windows 10, organisation-specific application-control policies, physical DPI settings, and production Authenticode signing require separate validation. Installation and diagnostics on this development workstation establish local functionality.
 
 The release installer is unsigned. The test build override 0.4.1 is kept only in the temporary QA output. The authoritative release version remains 0.4.0.
+
+## Process browsing update 0.4.2
+
+The 0.4.2 WPF build passed with zero warnings and errors. All 55 Pester tests and 11 .NET checks passed, including process identity, Teams/WebView2 ownership, different hosts, termination, missing memory, timestamp-aligned aggregation and reconstruction from older report samples. Live Windows integration completed 15 of 15 scheduled samples and verified cancellation without partial export. A separate live report grouped two Teams processes with eight WebView2 descendants under Microsoft Teams.
+
+The 0.4.2 installer compiled successfully with the new engine file bundled. This update's installer has not repeated the full install/upgrade/uninstall cycle above. Visual inspection of the updated process tabs was blocked by the computer-use helper returning a window ownership error. Windows 10 and Task Manager private resident working-set comparison remain unverified. The schema remains 0.2 with documented optional fields.

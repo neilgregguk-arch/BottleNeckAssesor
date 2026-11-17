@@ -35,14 +35,19 @@ public sealed record Finding(string Title, string Level, string Confidence, stri
     string Investigation, string Evidence);
 
 public sealed record ProcessReading(string Name, int Pid, string? StartUtc, double? AverageCpuPercent,
-    double? PeakCpuPercent, double? CpuSeconds, double? PrivateMiB, double? WorkingSetMiB, string? Path);
+    double? PeakCpuPercent, double? CpuSeconds, double? PrivateMiB, double? WorkingSetMiB, string? Path,
+    string Application = "Unattributed", string OwnershipEvidence = "No verified ownership metadata", string? InstanceKey = null);
+
+public sealed record ApplicationReading(string Name, string Key, double? PrivateMiB, double? WorkingSetMiB,
+    int PrivateSamples, int WorkingSetSamples, IReadOnlyList<ProcessReading> Processes);
 
 public sealed record SamplingQuality(int Expected, int Actual, int ValidCpu, int Missed, double DurationSeconds,
     IReadOnlyList<string> Errors, double? AverageWorkSeconds, double? PeakWorkSeconds);
 
 public sealed record DiagnosticReport(string Schema, string Computer, DateTimeOffset Started, string Assessment,
     bool Incomplete, IReadOnlyList<string> CoverageGaps, IReadOnlyList<Sample> Samples, IReadOnlyList<Finding> Findings,
-    IReadOnlyList<ProcessReading> Processes, SamplingQuality Quality, string JsonPath, string? HtmlPath);
+    IReadOnlyList<ProcessReading> Processes, SamplingQuality Quality, string JsonPath, string? HtmlPath,
+    IReadOnlyList<ApplicationReading>? Applications = null);
 
 public sealed record EngineProgress(string Phase, Sample? Sample = null, int Collected = 0, int Expected = 0);
 
@@ -88,8 +93,8 @@ public static class DiagnosticData
         return new DiagnosticReport(schema, RequiredText(root.Field("System"), "ComputerName"),
             Timestamp(root, "StartedUtc"), RequiredText(assessment, "Summary"),
             category == "Insufficient diagnostic data" || gaps.Length > 0 || actual == 0, gaps, samples, findings,
-            ParseProcesses(root.Field("Statistics").Field("Processes").Field("Leaders")), settings, path,
-            File.Exists(html) ? html : null);
+            ParseAllProcesses(root), settings, path,
+            File.Exists(html) ? html : null, ParseApplications(root));
     }
 
     public static EngineEvent ParseEvent(string line)
@@ -195,6 +200,46 @@ public static class DiagnosticData
         }
         return readings.OrderByDescending(item => item.AverageCpuPercent).ThenBy(item => item.Name).ThenBy(item => item.Pid).ToArray();
     }
+
+    private static ProcessReading ParseProcess(JsonElement item) => new(item.Text("Name") ?? "Unavailable",
+        item.Int("Id") ?? 0, item.Text("StartUtc"), item.Number("AverageCpuPercent"), item.Number("PeakCpuPercent"),
+        item.Number("CumulativeCpuSeconds"), item.Number("PeakPrivateBytes") / 1048576,
+        item.Number("PeakWorkingSetBytes") / 1048576, item.Text("Path"), item.Text("Application") ?? "Unattributed",
+        item.Text("OwnershipEvidence") ?? "No verified ownership metadata", item.Text("InstanceKey"));
+
+    private static IReadOnlyList<ProcessReading> ParseAllProcesses(JsonElement root)
+    {
+        var all = root.Field("Statistics").Field("Processes").Field("All");
+        if (all.ValueKind == JsonValueKind.Array) return all.Items().Select(ParseProcess).ToArray();
+        // Older reports retained every raw process sighting even though their leaders were capped.
+        var rows = root.Field("Samples").Items().SelectMany(sample => sample.Field("Processes").Items().Select(row =>
+            (Row: row, Key: row.Text("StartUtc") is { Length: > 0 } started
+                ? $"{row.Int("Id")}/{started}" : $"unknown/{row.Int("Id")}/{sample.Int("Slot")}"))).ToArray();
+        if (rows.Length == 0) return ParseProcesses(root.Field("Statistics").Field("Processes").Field("Leaders"));
+        var processors = root.Field("System").Int("LogicalProcessorCount");
+        return rows.GroupBy(row => row.Key).Select(group =>
+        {
+            var first = group.First().Row;
+            var cpuRows = group.Select(row => row.Row).Where(row => row.Number("CpuSeconds").HasValue &&
+                row.Number("CpuIntervalSeconds") > 0 && row.Text("StartUtc") is { Length: > 0 }).ToArray();
+            var elapsed = cpuRows.Sum(row => row.Number("CpuIntervalSeconds") ?? 0);
+            var cpu = cpuRows.Length > 0 ? cpuRows.Sum(row => row.Number("CpuSeconds") ?? 0) : (double?)null;
+            var path = root.Field("ProcessPaths").Text($"{first.Int("Id")}/{first.Text("StartUtc")}");
+            return new ProcessReading(first.Text("Name") ?? "Unavailable", first.Int("Id") ?? 0, first.Text("StartUtc"),
+                elapsed > 0 && processors > 0 ? cpu / elapsed / processors * 100 : null,
+                group.Select(row => row.Row.Number("CpuPercent")).Max(), cpu,
+                group.Select(row => row.Row.Number("PrivateBytes")).Max() / 1048576,
+                group.Select(row => row.Row.Number("WorkingSetBytes")).Max() / 1048576, path, InstanceKey: group.Key);
+        }).OrderBy(row => row.Name).ThenBy(row => row.Pid).ToArray();
+    }
+
+    private static IReadOnlyList<ApplicationReading> ParseApplications(JsonElement root) =>
+        root.Field("Applications").Items().Select(item => new ApplicationReading(
+            item.Text("Name") ?? "Unattributed", item.Text("Key") ?? "unattributed",
+            item.Field("PrivateBytes").Number("Maximum") / 1048576,
+            item.Field("WorkingSetBytes").Number("Maximum") / 1048576,
+            item.Field("PrivateBytes").Int("Count") ?? 0, item.Field("WorkingSetBytes").Int("Count") ?? 0,
+            item.Field("Processes").Items().Select(ParseProcess).ToArray())).ToArray();
 
     private static string RequiredText(JsonElement source, string key) =>
         source.Text(key) is { Length: > 0 } value ? value : throw new InvalidDataException($"Missing report or event field '{key}'.");

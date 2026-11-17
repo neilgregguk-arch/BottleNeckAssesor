@@ -56,6 +56,7 @@ function Get-WpbdProcessStatistics {
             }
             if (-not $groups.ContainsKey($key)) {
                 $groups[$key] = [pscustomobject]@{
+                    InstanceKey = $key
                     Id = $row.Id; Name = $row.Name; StartUtc = $row.StartUtc
                     Path = $(if ($null -ne $Paths) { $Paths[$key] } else { $null })
                     Observations = 0; CpuIntervals = 0; ObservedCpuIntervalSeconds = 0.0
@@ -102,6 +103,7 @@ function Get-WpbdProcessStatistics {
         InstancesWithCpuIntervals = @($groups.Values | Where-Object { $_.CpuIntervals -gt 0 }).Count
         InstancesWithMissingPath = @($groups.Values | Where-Object { -not $_.Path }).Count
         Leaders = [pscustomobject] $leaders
+        All = @($groups.Values | Sort-Object Name, Id, StartUtc, InstanceKey)
     }
 }
 
@@ -337,6 +339,7 @@ function Get-WpbdAnalysis {
     $cpu | Add-Member -NotePropertyName SamplesAboveThreshold -NotePropertyValue $cpuHigh
     $cpu | Add-Member -NotePropertyName PercentAboveThreshold -NotePropertyValue (Get-WpbdRatio $cpuHigh $cpu.Count 100)
     $process = Get-WpbdProcessStatistics $samples $Metrics.ProcessPaths $Metrics.System.LogicalProcessorCount
+    $applications = @(Get-WpbdApplications $samples $process.All $Metrics.ProcessMetadata)
     if ($cpu.Count -lt $required) {
         $gaps.Add("Total CPU ($($cpu.Count) usable samples, $required required)")
     } elseif ($cpuHigh -ge $thresholds.MinimumSamples -and $cpuFraction -ge $thresholds.SustainedFraction) {
@@ -438,6 +441,8 @@ function Get-WpbdAnalysis {
         ActualDurationSeconds = $Metrics.ActualDurationSeconds; Samples = $samples
         SamplingQuality = $sampling.Quality; CollectionTiming = $sampling.Timing
         MemoryAssessment = $memory.Assessment; Advisories = $advisories
+        ProcessMetadata = @($Metrics.ProcessMetadata | Where-Object { $null -ne $_ })
+        Applications = $applications
         CriticalSystemEvents = @($Metrics.CriticalSystemEvents | Where-Object { $null -ne $_ })
         CollectionErrors = @($Metrics.CollectionErrors | Where-Object { $null -ne $_ })
         Statistics = [pscustomobject]@{

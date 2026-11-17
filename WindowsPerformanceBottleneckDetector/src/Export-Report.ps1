@@ -190,6 +190,16 @@ function ConvertTo-WpbdHtmlReport {
         New-WpbdHtmlTable @('Process', 'PID', 'Start (UTC)', 'Average CPU (%)', 'Peak CPU (%)', 'CPU time (s)',
             'Private peak (MiB)', 'Working set peak (MiB)', 'Executable path') $rows
     }
+    $applicationRows = @(foreach ($application in $Diagnostic.Applications) {
+        ,@($application.Name, $application.Processes.Count,
+            (Format-WpbdNumber $application.PrivateBytes.Maximum 1MB),
+            (Format-WpbdNumber $application.WorkingSetBytes.Maximum 1MB),
+            $application.PrivateBytes.Count, $application.WorkingSetBytes.Count, $application.Key)
+    })
+    $applicationTable = if ($applicationRows.Count) {
+        New-WpbdHtmlTable @('Application', 'Captured entries', 'Private peak (MiB)', 'Working set peak (MiB)',
+            'Complete private samples', 'Complete working set samples', 'Ownership key') $applicationRows
+    } else { '<p>Application ownership measurements unavailable.</p>' }
     $eventRows = @(foreach ($event in $Diagnostic.CriticalSystemEvents) {
         ,@($event.TimestampUtc, $event.Provider, $event.EventId, $event.RecordId)
     })
@@ -277,7 +287,8 @@ $validTable
 <section><h2>Memory</h2><p>$memoryCategory</p><p>Hard page reads and page input can include file-backed data. Page output and page-list measurements provide context.</p>$memory</section>
 <section><h2>Storage</h2><p>Latency averages are weighted by completed operations. Latency can be unavailable when no operations complete in the interval.</p>
 $($disks -join "`n")<h3>Fixed-volume capacity</h3>$drives</section>
-<section><h2>Top processes</h2><p>CPU percentages are relative to total machine capacity. Average CPU uses observed intervals for each process. Private bytes measure process-private allocation. Working set measures pages resident at the sample time and can include shared pages.</p>
+<section><h2>Applications</h2><p>Application peaks are maxima of per-sample sums. Working set sums include shared pages. Unattributed entries lack verified ownership. Private bytes and working set use different accounting from Task Manager private resident memory.</p>$applicationTable</section>
+<section><h2>Top processes</h2><p>CPU percentages are relative to total machine capacity. Average CPU uses observed intervals for each process. Private bytes measure process-private allocation. Working set measures pages resident at the sample time and can include shared pages. All captured process instances are available in JSON Statistics.Processes.All and the desktop All Processes view.</p>
 $($processTables -join "`n")</section>
 <section><h2>Recent critical System events</h2><p class="meta">Up to 10 events from the last 24 hours.</p>$events</section>
 <section><h2>Measurement availability</h2>$gaps<p>Statistics tables show how many samples contributed to each measurement.</p>

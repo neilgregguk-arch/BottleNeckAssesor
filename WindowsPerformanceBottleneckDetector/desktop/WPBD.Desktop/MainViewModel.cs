@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Data;
 using Microsoft.Win32;
 using WPBD.Core;
 
@@ -106,7 +107,36 @@ internal sealed class MainViewModel : INotifyPropertyChanged
         ? $"{report.Computer} · {report.Started.ToLocalTime():g} · schema {report.Schema}"
         : "Findings and process rankings are available after collection or when you open a saved report.";
     public IReadOnlyList<Finding> Findings => _report?.Findings ?? [];
-    public IReadOnlyList<ProcessReading> Processes => _report?.Processes ?? [];
+    private string _processSearch = "";
+    private string _processFilter = "All captured";
+    private ICollectionView _processes = CollectionViewSource.GetDefaultView(Array.Empty<ProcessReading>());
+    public ICollectionView Processes => _processes;
+    public IReadOnlyList<ApplicationReading> Applications => _report?.Applications ?? [];
+    public IReadOnlyList<string> ProcessFilters { get; } = ["All captured", "Attributed", "Unattributed", "CPU measured", "Memory measured"];
+    public string ProcessSearch
+    {
+        get => _processSearch;
+        set { _processSearch = value; _processes.Refresh(); Changed(); }
+    }
+    public string ProcessFilter
+    {
+        get => _processFilter;
+        set { _processFilter = value; _processes.Refresh(); Changed(); }
+    }
+    public string ProcessCount => $"{_report?.Processes.Count ?? 0} captured entries. Each row represents a verified process instance or an individual sighting when start time is unavailable.";
+    private bool FilterProcess(object item)
+    {
+        var process = (ProcessReading)item;
+        var text = $"{process.Name} {process.Pid} {process.Path} {process.Application}";
+        return text.Contains(_processSearch, StringComparison.OrdinalIgnoreCase) && _processFilter switch
+        {
+            "Attributed" => process.Application != "Unattributed",
+            "Unattributed" => process.Application == "Unattributed",
+            "CPU measured" => process.AverageCpuPercent.HasValue,
+            "Memory measured" => process.PrivateMiB.HasValue || process.WorkingSetMiB.HasValue,
+            _ => true
+        };
+    }
     public IReadOnlyList<string> CoverageGaps => _report?.CoverageGaps ?? [];
     public IReadOnlyList<string> CollectionErrors => _report?.Quality.Errors ?? [];
     public string QualitySummary => _report is { Quality: var quality }
@@ -159,6 +189,7 @@ internal sealed class MainViewModel : INotifyPropertyChanged
         using var cancellation = new CancellationTokenSource();
         _cancellation = cancellation;
         _report = null;
+        _processes = CollectionViewSource.GetDefaultView(Array.Empty<ProcessReading>());
         _writing = false;
         _expected = _slot = _collected = _timelineIndex = 0;
         Timeline.Clear();
@@ -303,6 +334,8 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     private void ApplyReport(DiagnosticReport report, bool historical)
     {
         _report = report;
+        _processes = new ListCollectionView(report.Processes.ToList());
+        _processes.Filter = FilterProcess;
         _expected = report.Quality.Expected;
         _slot = _expected;
         _collected = report.Quality.Actual;

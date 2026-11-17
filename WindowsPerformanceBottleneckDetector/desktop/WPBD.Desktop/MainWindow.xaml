@@ -220,23 +220,77 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
-            <TabItem Header="Processes">
+            <TabItem Header="All Processes">
                 <DockPanel>
-                    <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8" Style="{StaticResource MutedText}"
-                               Text="Ranked processes from the loaded report. Select a column to sort. CPU percentages use total machine capacity."/>
-                    <DataGrid ItemsSource="{Binding Processes}" AlternationCount="2" AutomationProperties.Name="Ranked processes">
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <TextBlock Text="{Binding ProcessCount}" Style="{StaticResource MutedText}"/>
+                        <TextBlock Text="Private bytes measure allocation. Working set includes shared resident pages. Select a column to sort." Style="{StaticResource MutedText}"/>
+                        <DockPanel Margin="0,7,0,0">
+                            <ComboBox DockPanel.Dock="Right" Width="155" ItemsSource="{Binding ProcessFilters}" SelectedItem="{Binding ProcessFilter}" AutomationProperties.Name="Process filter"/>
+                            <TextBlock Text="Search" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox Text="{Binding ProcessSearch, UpdateSourceTrigger=PropertyChanged}" Padding="6" Margin="0,0,8,0"
+                                     AutomationProperties.Name="Search processes by name, PID, path or application"/>
+                        </DockPanel>
+                    </StackPanel>
+                    <DataGrid ItemsSource="{Binding Processes}" AlternationCount="2" AutomationProperties.Name="All captured processes">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Process" Binding="{Binding Name}" Width="140" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="64" ElementStyle="{StaticResource CellText}"/>
+                            <DataGridTextColumn Header="Application" Binding="{Binding Application}" Width="140" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Average CPU (%)" Binding="{Binding AverageCpuPercent, StringFormat=F2, TargetNullValue=Unavailable}" Width="113" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Peak CPU (%)" Binding="{Binding PeakCpuPercent, StringFormat=F2, TargetNullValue=Unavailable}" Width="100" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="CPU time (s)" Binding="{Binding CpuSeconds, StringFormat=F2, TargetNullValue=Unavailable}" Width="91" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Private peak (MiB)" Binding="{Binding PrivateMiB, StringFormat=F1, TargetNullValue=Unavailable}" Width="125" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Working set (MiB)" Binding="{Binding WorkingSetMiB, StringFormat=F1, TargetNullValue=Unavailable}" Width="127" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Executable path" Binding="{Binding Path, TargetNullValue=Unavailable}" Width="*" MinWidth="180" ElementStyle="{StaticResource CellText}"/>
+                            <DataGridTextColumn Header="Start (UTC)" Binding="{Binding StartUtc, TargetNullValue=Unavailable}" Width="210" ElementStyle="{StaticResource CellText}"/>
+                            <DataGridTextColumn Header="Ownership evidence" Binding="{Binding OwnershipEvidence}" Width="230" ElementStyle="{StaticResource CellText}"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </DockPanel>
+            </TabItem>
+            <TabItem Header="Applications">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,9"
+                                   Text="Expand an application to inspect its processes. Group peaks use totals from one sample at a time. Missing member measurements make that sample's total unavailable. Working set sums can count shared pages more than once. Older reports provide process browsing with ownership unavailable."/>
+                        <ItemsControl ItemsSource="{Binding Applications}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource PanelSurface}" Margin="0,0,0,8">
+                                        <Expander>
+                                            <Expander.Header>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                                    <WrapPanel>
+                                                        <TextBlock Text="{Binding PrivateMiB, StringFormat='Private peak {0:N1} MiB', TargetNullValue='Private total unavailable'}" Margin="0,0,18,0"/>
+                                                        <TextBlock Text="{Binding WorkingSetMiB, StringFormat='Working set peak {0:N1} MiB', TargetNullValue='Working set total unavailable'}"/>
+                                                    </WrapPanel>
+                                                </StackPanel>
+                                            </Expander.Header>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Key}" Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
+                                                <TextBlock Text="{Binding PrivateSamples, StringFormat='Complete private-byte samples {0}'}" Style="{StaticResource MutedText}"/>
+                                                <TextBlock Text="{Binding WorkingSetSamples, StringFormat='Complete working-set samples {0}'}" Style="{StaticResource MutedText}"/>
+                                                <DataGrid ItemsSource="{Binding Processes}" MaxHeight="360" Margin="0,7,0,0">
+                                                    <DataGrid.Columns>
+                                                        <DataGridTextColumn Header="Process" Binding="{Binding Name}" Width="150" ElementStyle="{StaticResource CellText}"/>
+                                                        <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="65" ElementStyle="{StaticResource CellText}"/>
+                                                        <DataGridTextColumn Header="Private peak (MiB)" Binding="{Binding PrivateMiB, StringFormat=F1, TargetNullValue=Unavailable}" Width="130" ElementStyle="{StaticResource CellText}"/>
+                                                        <DataGridTextColumn Header="Working set peak (MiB)" Binding="{Binding WorkingSetMiB, StringFormat=F1, TargetNullValue=Unavailable}" Width="150" ElementStyle="{StaticResource CellText}"/>
+                                                        <DataGridTextColumn Header="Start (UTC)" Binding="{Binding StartUtc, TargetNullValue=Unavailable}" Width="205" ElementStyle="{StaticResource CellText}"/>
+                                                        <DataGridTextColumn Header="Ownership evidence" Binding="{Binding OwnershipEvidence}" Width="230" ElementStyle="{StaticResource CellText}"/>
+                                                        <DataGridTextColumn Header="Path" Binding="{Binding Path, TargetNullValue=Unavailable}" Width="260" ElementStyle="{StaticResource CellText}"/>
+                                                    </DataGrid.Columns>
+                                                </DataGrid>
+                                            </StackPanel>
+                                        </Expander>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
             <TabItem Header="Reports">
                 <DockPanel>

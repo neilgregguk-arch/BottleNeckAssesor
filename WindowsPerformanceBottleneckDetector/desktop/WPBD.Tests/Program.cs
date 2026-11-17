@@ -1,11 +1,46 @@
 using System.Runtime.Versioning;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using WPBD.Core;
 
 var temporary = Directory.CreateTempSubdirectory("wpbd-tests-").FullName;
 var valid = Path.Combine(temporary, "WPBD-test.json");
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("legacy raw samples expose processes omitted from top-ten rankings", async () =>
+    {
+        var document = JsonNode.Parse(Fixture("0.2"))!;
+        var samples = document["Samples"]!.AsArray();
+        var processes = new JsonArray();
+        for (var pid = 1; pid <= 43; pid++)
+            processes.Add(new JsonObject { ["Id"] = pid, ["Name"] = pid <= 2 ? "ms-teams" : "msedgewebview2",
+                ["StartUtc"] = "2026-01-02T00:00:00Z", ["PrivateBytes"] = 1048576, ["WorkingSetBytes"] = 2097152 });
+        samples[0]!["Processes"] = processes;
+        var path = Path.Combine(temporary, "WPBD-all-legacy.json");
+        await File.WriteAllTextAsync(path, document.ToJsonString());
+        var report = await DiagnosticData.LoadAsync(path);
+        Check(report.Processes.Count == 43 && report.Processes.Count(row => row.Name == "ms-teams") == 2,
+            "Captured processes were lost outside leader rankings.");
+        Check(report.Processes.All(row => row.Application == "Unattributed"), "Legacy ownership was guessed.");
+    }),
+    ("new all-process and application fields preserve membership and complete-sample counts", async () =>
+    {
+        var document = JsonNode.Parse(Fixture("0.2"))!;
+        var process = new JsonObject { ["Id"] = 123, ["Name"] = "ms-teams", ["StartUtc"] = "2026-01-02T00:00:00Z",
+            ["Application"] = "Microsoft Teams", ["OwnershipEvidence"] = "Executable path", ["PeakPrivateBytes"] = 1048576 };
+        document["Statistics"]!["Processes"]!["All"] = new JsonArray(process.DeepClone());
+        document["Applications"] = new JsonArray(new JsonObject {
+            ["Name"] = "Microsoft Teams", ["Key"] = "verified-path", ["Processes"] = new JsonArray(process.DeepClone()),
+            ["PrivateBytes"] = new JsonObject { ["Maximum"] = 2097152, ["Count"] = 1 },
+            ["WorkingSetBytes"] = new JsonObject { ["Count"] = 0 } });
+        var path = Path.Combine(temporary, "WPBD-applications.json");
+        await File.WriteAllTextAsync(path, document.ToJsonString());
+        var report = await DiagnosticData.LoadAsync(path);
+        Check(report.Processes.Single().Pid == 123 && report.Processes.Single().Application == "Microsoft Teams",
+            "New all-process field was ignored.");
+        Check(report.Applications!.Single() is { PrivateMiB: 2, WorkingSetMiB: null, PrivateSamples: 1, WorkingSetSamples: 0 } app &&
+            app.Processes.Single().Pid == 123, "Application coverage or membership was lost.");
+    }),
     ("configuration accepts the supported choices", () =>
     {
         var options = new DiagnosticOptions(60, 2, temporary, false).Validate();

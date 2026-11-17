@@ -27,7 +27,7 @@ public sealed class EngineRunner(string engineDirectory)
         var worker = Path.Combine(directory, "Invoke-WpbdDesktop.ps1");
         var required = new[] { worker, Path.Combine(directory, "src", "WPBD.psm1"),
             Path.Combine(directory, "src", "Collect-Metrics.ps1"), Path.Combine(directory, "src", "Analyse-Metrics.ps1"),
-            Path.Combine(directory, "src", "Export-Report.ps1") };
+            Path.Combine(directory, "src", "Export-Report.ps1"), Path.Combine(directory, "src", "Process-Applications.ps1") };
         var missing = required.Where(path => !File.Exists(path)).ToArray();
         if (missing.Length > 0)
             throw new EngineException("The bundled diagnostic engine is incomplete. Restore the Engine folder from the same build.",

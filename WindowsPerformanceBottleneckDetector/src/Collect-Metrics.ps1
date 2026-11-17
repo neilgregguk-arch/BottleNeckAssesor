@@ -385,6 +385,7 @@ function Get-WpbdMetrics {
     $errors = [ordered]@{}
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $system = Get-WpbdSystem $errors
+    $metadata = @(Get-WpbdProcessMetadata $errors)
     $inventorySeconds = $clock.Elapsed.TotalSeconds
     $processorState = @{
         PreferredClass = 'Win32_PerfRawData_Counters_ProcessorInformation'
@@ -481,6 +482,7 @@ function Get-WpbdMetrics {
     $postSampling = [Diagnostics.Stopwatch]::StartNew()
     Write-Verbose 'Reading drive capacity and recent critical events after performance sampling.'
     $paths = Get-WpbdProcessPaths $before.Processes $errors
+    $metadata += @(Get-WpbdProcessMetadata $errors)
     if ($CancellationSignal -and $CancellationSignal.WaitOne(0)) { throw [OperationCanceledException]::new() }
     $drives = @(Get-WpbdDrives $errors)
     $events = @(Get-WpbdCriticalEvents $errors)
@@ -502,6 +504,7 @@ function Get-WpbdMetrics {
             PostSamplingSeconds = $postSampling.Elapsed.TotalSeconds
         }
         Samples = $samples.ToArray(); Drives = $drives; CriticalSystemEvents = $events; ProcessPaths = $paths
+        ProcessMetadata = $metadata
         CollectionErrors = @($errors.Values)
     }
 }

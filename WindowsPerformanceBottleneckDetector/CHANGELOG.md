@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2
+
+- Added All Processes browsing, search and attribution filters, plus expandable Applications with process membership.
+- Added process inventory outside timed sampling, parent identity validation and conservative WebView2 attribution to verified host executables.
+- Added complete per-sample application memory totals and all-process statistics to schema 0.2 as optional additive fields.
+- Older reports reconstruct full process lists from raw samples and show unavailable ownership explicitly.
+
 ## 0.4.0
 
 - Added a single-file, self-contained x64 Inno Setup installer with per-user installation, Start menu and optional desktop shortcuts, and standard Windows uninstall registration.

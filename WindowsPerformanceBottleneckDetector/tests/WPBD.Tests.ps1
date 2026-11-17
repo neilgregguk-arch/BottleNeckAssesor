@@ -525,3 +525,78 @@ Describe 'WPBD diagnostic engine' {
         }
     }
 }
+Describe 'Application attribution and aligned memory' {
+    InModuleScope WPBD {
+        function New-ApplicationFixture {
+            $start = '2026-01-02T00:00:00.1234560Z'
+            $child = '2026-01-02T00:00:01.1234560Z'
+            $other = '2026-01-02T00:00:02.1234560Z'
+            $metadata = @(
+                [pscustomobject]@{ Identity = Get-WpbdProcessIdentity 10 $start; Id=10; StartUtc=$start; Path='C:\Program Files\WindowsApps\MSTeams_1\ms-teams.exe'; ParentId=1; ParentStartUtc=$null; WebViewHostExecutable=$null }
+                [pscustomobject]@{ Identity = Get-WpbdProcessIdentity 11 $child; Id=11; StartUtc=$child; Path='C:\WebView\msedgewebview2.exe'; ParentId=10; ParentStartUtc=$start; WebViewHostExecutable='ms-teams.exe' }
+                [pscustomobject]@{ Identity = Get-WpbdProcessIdentity 20 $start; Id=20; StartUtc=$start; Path='C:\Other\other.exe'; ParentId=1; ParentStartUtc=$null; WebViewHostExecutable=$null }
+                [pscustomobject]@{ Identity = Get-WpbdProcessIdentity 21 $other; Id=21; StartUtc=$other; Path='C:\WebView\msedgewebview2.exe'; ParentId=20; ParentStartUtc=$start; WebViewHostExecutable='other.exe' }
+            )
+            $samples = @(foreach($slot in 1..3) {
+                $rows = @(
+                    [pscustomobject]@{ Id=10; Name='ms-teams'; StartUtc=$start; PrivateBytes=$(if($slot -eq 1){900}else{100}); WorkingSetBytes=200 }
+                    $(if($slot -lt 3){[pscustomobject]@{ Id=11; Name='msedgewebview2'; StartUtc=$child; PrivateBytes=$(if($slot -eq 2){900}else{100}); WorkingSetBytes=300 }})
+                    [pscustomobject]@{ Id=20; Name='other'; StartUtc=$start; PrivateBytes=70; WorkingSetBytes=80 }
+                    [pscustomobject]@{ Id=21; Name='msedgewebview2'; StartUtc=$other; PrivateBytes=90; WorkingSetBytes=100 }
+                    [pscustomobject]@{ Id=30; Name='msedgewebview2'; StartUtc=$null; PrivateBytes=50; WorkingSetBytes=$null }
+                ) | Where-Object {$null -ne $_}
+                [pscustomobject]@{ Slot=$slot; TimestampUtc="2026-01-02T00:00:0$($slot+2)Z"; Processes=@($rows) }
+            })
+            [pscustomobject]@{ Samples=$samples; Metadata=$metadata }
+        }
+        It 'groups Teams WebView2 through identity and retains other hosts separately' {
+            $fixture=New-ApplicationFixture
+            $process=Get-WpbdProcessStatistics $fixture.Samples @{} 4
+            $groups=@(Get-WpbdApplications $fixture.Samples $process.All $fixture.Metadata)
+            $teams=$groups | Where-Object Name -eq 'Microsoft Teams'
+            $teams.Processes.Count | Should Be 2
+            $teams.Processes[1].Application | Should Be 'Microsoft Teams'
+            ($groups | Where-Object Name -eq 'other').Processes.Count | Should Be 2
+            ($groups | Where-Object Name -eq 'Unattributed').Processes.Count | Should Be 3
+        }
+        It 'takes peaks from aligned sums and drops terminated members from later samples' {
+            $fixture=New-ApplicationFixture
+            $process=Get-WpbdProcessStatistics $fixture.Samples @{} 4
+            $teams=@(Get-WpbdApplications $fixture.Samples $process.All $fixture.Metadata) | Where-Object Name -eq 'Microsoft Teams'
+            $teams.PrivateBytes.Maximum | Should Be 1000
+            ($teams.Processes | Measure-Object PeakPrivateBytes -Sum).Sum | Should Be 1800
+            $teams.Samples[2].PrivateBytes | Should Be 100
+            $teams.Samples[2].ProcessCount | Should Be 1
+        }
+        It 'keeps missing member memory unknown rather than summing a partial total' {
+            $fixture=New-ApplicationFixture
+            $fixture.Samples[0].Processes[1].PrivateBytes=$null
+            $process=Get-WpbdProcessStatistics $fixture.Samples @{} 4
+            $groups=@(Get-WpbdApplications $fixture.Samples $process.All $fixture.Metadata)
+            ($groups | Where-Object Name -eq 'Microsoft Teams').Samples[0].PrivateBytes | Should BeNullOrEmpty
+        }
+        It 'does not assign a reused parent PID or an inconsistent command-line host' {
+            $fixture=New-ApplicationFixture
+            $fixture.Metadata[1].ParentStartUtc='2026-01-02T00:00:09Z'
+            $fixture.Metadata[3].WebViewHostExecutable='ms-teams.exe'
+            $process=Get-WpbdProcessStatistics $fixture.Samples @{} 4
+            $groups=@(Get-WpbdApplications $fixture.Samples $process.All $fixture.Metadata)
+            ($groups | Where-Object Name -eq 'Microsoft Teams').Processes.Count | Should Be 1
+            ($groups | Where-Object Name -eq 'Unattributed').Processes.Count | Should Be 5
+        }
+        It 'matches CIM and Get-Process timestamps at microsecond precision' {
+            (Get-WpbdProcessIdentity 10 '2026-01-02T00:00:00.1234567Z') |
+                Should Be (Get-WpbdProcessIdentity 10 '2026-01-02T00:00:00.1234560Z')
+            (Get-WpbdProcessIdentity 10 '2026-01-02T00:00:01.1234560Z') |
+                Should Not Be (Get-WpbdProcessIdentity 10 '2026-01-02T00:00:00.1234560Z')
+        }
+        It 'retains every captured process outside the top ten' {
+            $sample=[pscustomobject]@{ Slot=1; Processes=@(foreach($id in 1..45){
+                [pscustomobject]@{ Id=$id; Name="process$id"; StartUtc='2026-01-02T00:00:00Z'; PrivateBytes=$id; WorkingSetBytes=$id }
+            })}
+            $process=Get-WpbdProcessStatistics @($sample) @{} 4
+            $process.All.Count | Should Be 45
+            $process.Leaders.PeakPrivateBytes.Count | Should Be 10
+        }
+    }
+}
