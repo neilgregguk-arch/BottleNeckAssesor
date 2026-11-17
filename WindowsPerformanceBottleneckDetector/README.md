@@ -1,6 +1,48 @@
 # Windows Performance Bottleneck Detector
 
-WPBD 0.3 adds a Windows desktop app to the local, read-only diagnostic engine. WPBD samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. The engine runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. It requires no agent, external PowerShell module or internet connection.
+WPBD 0.4 packages the Windows desktop app as a single installer. WPBD samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. The read-only engine runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. It requires no agent, external PowerShell module or internet connection.
+
+## Install WPBD
+
+Copy `WPBD-Setup-0.4.0-x64.exe` to a compatible workstation and double-click it. Setup installs the app for the current user under `%LOCALAPPDATA%\Programs\WPBD`, adds a Start menu shortcut and offers an optional desktop shortcut. Select **Launch Windows Performance Bottleneck Detector** at the end of Setup, or open WPBD from Start.
+
+The installer bundles the self-contained .NET 10 desktop runtime and diagnostic scripts. The target needs native x64 Windows 11 or a Windows 10 edition supported by .NET 10, Windows PowerShell 5.1, and write access to the user's local application data. Setup works offline and runs with current-user permissions. Your organisation's application-control and script policies still apply. [Microsoft .NET Windows support](https://learn.microsoft.com/dotnet/core/install/windows#supported-versions)
+
+To upgrade, finish or cancel the active diagnostic, close all WPBD windows, and run the newer installer under the same Windows account. Setup uses the existing app identity and installation directory. Setup and Uninstall ask you to close a running WPBD instance before replacing or removing files.
+
+To remove WPBD, close it and select **Uninstall** in Windows **Settings > Apps > Installed apps**. Reports and logs remain under `%LOCALAPPDATA%\WPBD\Reports` and `%LOCALAPPDATA%\WPBD\Logs`. Custom report folders are also preserved. Duration, interval and report folder preferences are saved separately in `%LOCALAPPDATA%\WPBD\Preferences.json` when WPBD closes. The process-only script policy override must be selected again after reopening WPBD.
+
+The unsigned installer may trigger a Microsoft Defender SmartScreen warning. Verify it against the SHA-256 published by your distributor and follow your organisation's approval process. With the setup file and its checksum file in the current folder, a technician can verify the bytes with:
+
+```powershell
+$name = 'WPBD-Setup-0.4.0-x64.exe'
+$expected = ((Get-Content -LiteralPath ".\$name.sha256" -Raw).Trim() -split '\s+', 2)[0]
+$actual = (Get-FileHash -LiteralPath ".\$name" -Algorithm SHA256).Hash
+if ($actual -ne $expected) { throw 'Installer SHA-256 mismatch.' }
+'Installer SHA-256 verified'
+```
+
+### Build the installer
+
+Use the .NET 10 SDK and Inno Setup 6.3 or newer on a Windows build machine. From the project directory:
+
+```powershell
+.\installer\Build-Installer.ps1
+```
+
+Use `-ISCCPath 'C:\path\to\ISCC.exe'` if the compiler is in a custom location. The build publishes into a fresh staging directory, checks the runtime and engine payload, compiles the EXE and writes a `.sha256` file under `installer\artifacts`. An initial build may need NuGet access to restore the x64 runtime packs. Set `VERSION` for each release. For an isolated upgrade test, use `-VersionOverride 0.4.1 -OutputDirectory <test-output-folder>` and keep the installer AppId unchanged. [Inno Setup downloads](https://jrsoftware.org/inno-setup/downloads)
+
+For production signing, use an organisation-issued Authenticode code-signing certificate and the Windows SDK SignTool. Sign the finished installer and regenerate its checksum from the signed bytes. Use the organisation's certificate thumbprint and RFC 3161 timestamp service. [Microsoft SignTool reference](https://learn.microsoft.com/windows/win32/seccrypto/signtool)
+
+```powershell
+$setup = '.\installer\artifacts\WPBD-Setup-0.4.0-x64.exe'
+signtool sign /sha1 'CERTIFICATE_THUMBPRINT' /fd SHA256 /tr 'RFC3161_TIMESTAMP_URL' /td SHA256 $setup
+if ($LASTEXITCODE -ne 0) { throw 'Installer signing failed.' }
+signtool verify /pa $setup
+if ($LASTEXITCODE -ne 0) { throw 'Installer signature verification failed.' }
+$hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+"$hash  $(Split-Path -Leaf $setup)" | Set-Content -LiteralPath "$setup.sha256" -Encoding Ascii
+```
 
 ## Desktop app
 
@@ -43,7 +85,7 @@ Cancellation signals a private, session-local Windows event checked by the worke
 - **Measurement unavailable**. See **Findings** for coverage and collection errors. Protected processes or Windows providers can limit results.
 - **Invalid or missing report**. Browse to a complete WPBD JSON file. To open HTML, keep the generated HTML with the matching basename beside it.
 
-The deployment described here targets x64. Read-only access to counters, process details and logs depends on Windows permissions and provider availability. Windows 10 and physical display scaling outside the development workstation need deployment validation.
+The deployment described here targets native x64. Read-only access to counters, process details and logs depends on Windows permissions and provider availability. Windows 10, clean-machine installation and physical display scaling outside the development workstation need deployment validation.
 
 ## Run a diagnostic from Windows PowerShell
 

@@ -5,11 +5,17 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>0.3.0</Version>
+    <Version>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/../../VERSION').Trim())</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Product>Windows Performance Bottleneck Detector</Product>
+    <Company>WPBD Project</Company>
+    <Description>Local Windows workstation performance diagnostics</Description>
+    <ApplicationIcon>Assets/WPBD.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../WPBD.Core/WPBD.Core.csproj" />
+    <Resource Include="Assets/WPBD.ico" />
     <Content Include="../Invoke-WpbdDesktop.ps1" Link="Engine/Invoke-WpbdDesktop.ps1"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../src/*" Link="Engine/src/%(Filename)%(Extension)"

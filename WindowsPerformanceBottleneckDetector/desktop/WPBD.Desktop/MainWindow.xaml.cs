@@ -29,4 +29,10 @@ public partial class MainWindow : Window
         }
         finally { _closing = false; }
     }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _viewModel.SavePreferences();
+        base.OnClosed(e);
+    }
 }

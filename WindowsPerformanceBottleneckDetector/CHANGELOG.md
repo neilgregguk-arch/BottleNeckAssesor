@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- Added a single-file, self-contained x64 Inno Setup installer with per-user installation, Start menu and optional desktop shortcuts, and standard Windows uninstall registration.
+- Added an installer build script with dependency and publish-output checks plus SHA-256 generation.
+- Added a shared WPBD icon, a single release version source and a guard that requires WPBD to close before an upgrade or uninstall.
+- Kept reports, logs and desktop preferences outside the program directory and preserved them across upgrade and uninstall.
+
 ## 0.3.0
 
 - Added a .NET 10 WPF application with live CPU, memory and disk charts, a sample inspector, structured findings and a sortable processes table.

@@ -30,7 +30,10 @@ internal sealed class MainViewModel : INotifyPropertyChanged
 
     public MainViewModel()
     {
-        _outputDirectory = Path.Combine(_localData, "Reports");
+        var preferences = DesktopPreferences.Load(_localData);
+        Duration = preferences.Duration;
+        Interval = preferences.Interval;
+        _outputDirectory = preferences.OutputDirectory;
         StartCommand = new Command(() => _run = StartAsync(), () => CanConfigure);
         CancelCommand = new Command(Cancel, () => CanCancel);
         ChooseFolderCommand = new Command(ChooseFolder, () => CanConfigure);
@@ -42,7 +45,7 @@ internal sealed class MainViewModel : INotifyPropertyChanged
         LoadSelectedCommand = new Command(() => RunUiTask(() => LoadAsync(SelectedHistory!.Path)), () => CanConfigure && SelectedHistory is not null);
         RefreshCommand = new Command(() => RunUiTask(RefreshHistoryAsync), () => CanConfigure && !_refreshing);
         AboutCommand = new Command(() => MessageBox.Show(
-            "Windows Performance Bottleneck Detector 0.3\n\nLocal workstation diagnostics using the bundled Windows PowerShell engine.\nReports and logs are stored separately.",
+            $"Windows Performance Bottleneck Detector {Version}\n\nLocal workstation diagnostics using the bundled Windows PowerShell engine.\nReports and logs are stored separately.",
             "About WPBD", MessageBoxButton.OK, MessageBoxImage.Information));
     }
 
@@ -52,9 +55,10 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     public IReadOnlyList<int> Intervals => DiagnosticOptions.Intervals;
     public IReadOnlyList<DurationOption> Durations { get; } =
         [new(30, "30 seconds"), new(60, "60 seconds"), new(120, "2 minutes"), new(300, "5 minutes")];
-    public int Duration { get; set; } = 60;
-    public int Interval { get; set; } = 2;
+    public int Duration { get; set; }
+    public int Interval { get; set; }
     public bool PolicyOverride { get; set; }
+    public string Version => App.ProductVersion;
     public string Computer => Environment.MachineName;
     public string Status { get; private set; } = "Ready";
     public string Activity { get; private set; } = "Start a diagnostic or load a saved report.";
@@ -137,6 +141,7 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     public ICommand AboutCommand { get; }
 
     public void Initialize() => RunUiTask(RefreshHistoryAsync);
+    public void SavePreferences() => new DesktopPreferences(Duration, Interval, OutputDirectory).Save(_localData);
 
     public async Task FinishClosingAsync()
     {
@@ -316,7 +321,10 @@ internal sealed class MainViewModel : INotifyPropertyChanged
         var dialog = new OpenFolderDialog { Title = "Choose the diagnostic report folder" };
         if (Directory.Exists(OutputDirectory)) dialog.InitialDirectory = OutputDirectory;
         if (dialog.ShowDialog() != true) return;
-        _outputDirectory = Path.GetFullPath(dialog.FolderName);
+        var directory = Path.GetFullPath(dialog.FolderName);
+        if (DesktopPreferences.IsProgramDirectory(directory))
+            throw new ArgumentException("Choose a report folder outside the WPBD program directory.");
+        _outputDirectory = directory;
         Changed();
         RunUiTask(RefreshHistoryAsync);
     });

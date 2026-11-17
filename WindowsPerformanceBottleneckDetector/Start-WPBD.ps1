@@ -3,7 +3,7 @@
 param(
     [ValidateRange(1, 3600)][int] $DurationSeconds = 60,
     [ValidateRange(1, 3600)][int] $SampleIntervalSeconds = 2,
-    [ValidateNotNullOrEmpty()][string] $OutputPath = (Join-Path $PSScriptRoot 'reports'),
+    [ValidateNotNullOrEmpty()][string] $OutputPath,
     [switch] $NoReport
 )
 
@@ -12,6 +12,7 @@ if ($SampleIntervalSeconds -gt $DurationSeconds) {
     throw 'SampleIntervalSeconds must be less than or equal to DurationSeconds.'
 }
 if (-not $NoReport) {
+    if (-not $OutputPath) { $OutputPath = Join-Path $PSScriptRoot 'reports' }
     if ([string]::IsNullOrWhiteSpace($OutputPath)) { throw 'OutputPath must be a directory path.' }
     $provider = $null
     $drive = $null
@@ -25,7 +26,8 @@ if (-not $NoReport) {
 }
 
 Import-Module "$PSScriptRoot/src/WPBD.psm1" -Force -ErrorAction Stop
-Write-Host "WPBD 0.3 | Sampling for $DurationSeconds seconds at $SampleIntervalSeconds-second intervals."
+$version = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Raw).Trim()
+Write-Host "WPBD $version | Sampling for $DurationSeconds seconds at $SampleIntervalSeconds-second intervals."
 $metrics = Get-WpbdMetrics -DurationSeconds $DurationSeconds -SampleIntervalSeconds $SampleIntervalSeconds
 Write-Host 'Analysing measurements...'
 $diagnostic = Get-WpbdAnalysis -Metrics $metrics
