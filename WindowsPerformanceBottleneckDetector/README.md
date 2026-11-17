@@ -1,6 +1,6 @@
 # Windows Performance Bottleneck Detector
 
-WPBD 0.1 is a local, read-only diagnostic engine for Windows 10 and Windows 11. It samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. It runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. The engine requires no agent, external PowerShell module or internet connection.
+WPBD 0.2 is a local, read-only diagnostic engine for Windows 10 and Windows 11. It samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. It runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. The engine requires no agent, external PowerShell module or internet connection.
 
 ## Run a diagnostic
 
@@ -29,16 +29,16 @@ Start with a standard user account. Local Windows permissions control access to 
 
 Findings contain the observed condition, an interpretation, supporting measurements and investigation steps. Severity describes the condition and confidence reflects the available evidence for the stated interpretation. Several findings can appear in one run.
 
-The default sustained rules require three qualifying samples and at least 60% of usable samples. Each assessed metric needs at least three usable samples and 60% of the scheduled samples. Very short runs can return useful measurements with insufficient coverage for classification.
+The default sustained rules require at least three qualifying samples and at least 60% of usable samples. An assessment also needs at least three usable samples and 60% of scheduled samples. Very short runs can return useful measurements with insufficient coverage for classification. Qualifying samples can occur anywhere in the sampled window.
 
 | Finding | Starting rule |
 | --- | --- |
 | CPU bottleneck | Total CPU utilisation exceeds 85% in sustained samples. |
-| Memory pressure | Available RAM is below 500 MiB and physical use is at least 90% in the same samples as either commit use of at least 90%, 10 page reads/s or more, or 50 pages input/s or more. Sustained pressure with elevated paging is critical. |
+| Memory pressure | Sustained reduced or critically low headroom and corroborating evidence in the same samples. See the memory rules below. |
 | Disk I/O bottleneck | For a physical disk, average latency is at least 25 ms and the same direction records at least 5 operations/s in sustained samples. Active time and queue length provide context. |
 | Low disk capacity | A fixed volume has less than 10% free space. Less than 2% is critical. Free space and I/O latency are assessed independently. |
 | Multiple potential bottlenecks | Findings in two or more of the four categories above. Each finding retains its own evidence. |
-| No clear bottleneck detected | All four assessment areas had sufficient coverage and their finding criteria were not met. |
+| No clear bottleneck detected | All four assessment areas had sufficient coverage and their finding criteria were not met. An elevated memory advisory can accompany this result. |
 | Insufficient diagnostic data | A metric or volume lacked enough evidence. This can accompany findings in areas where coverage was sufficient. |
 
 Thresholds are starting values and can be overridden when calling the analysis function. A threshold override affects only that call and the applied values are included in the report.
@@ -47,9 +47,33 @@ Thresholds are starting values and can be overridden when calling the analysis f
 Import-Module .\src\WPBD.psm1
 Get-WpbdThresholds
 $measurements = Get-WpbdMetrics -DurationSeconds 60 -SampleIntervalSeconds 2
-$diagnostic = Get-WpbdAnalysis -Metrics $measurements -ThresholdOverrides @{ DiskLatencyMs = 40 }
+$diagnostic = Get-WpbdAnalysis -Metrics $measurements -ThresholdOverrides @{ MemoryElevatedUsedPercent = 88; DiskLatencyMs = 40 }
 Export-WpbdReport -Diagnostic $diagnostic -OutputPath .\reports
 ```
+
+### Memory assessments
+
+| Classification | Rule with default thresholds |
+| --- | --- |
+| Normal memory operation | Sufficient physical memory measurements with no sustained elevated-use or pressure pattern. |
+| Elevated memory utilisation | Physical utilisation of at least 85% (`MemoryElevatedUsedPercent`), 1 GiB or less available (`MemoryElevatedAvailableBytes`), or tighter headroom thresholds below. Sustained elevation appears as an informational advisory when the pressure rules do not qualify. |
+| Potential memory pressure | At most 768 MiB (`MemoryPressureAvailableBytes`) or 8% (`MemoryPressureAvailablePercent`) available, or critically low headroom, with corroboration in the same sample. The relative rule also requires at most 2 GiB available (`MemoryRelativeHeadroomCapBytes`). Sustained potential pressure is a warning finding. |
+| Severe memory pressure | Below 500 MiB available (`AvailableMemoryBytes`) or at most 1% (`MemorySevereAvailablePercent`, subject to the same 2 GiB cap), and at least 90% physical utilisation (`MemoryUsedPercent`), with corroboration in the same sample. Sustained severe pressure is a critical finding. |
+| Insufficient memory data | Physical use and available RAM measurements, or the evidence needed during low headroom, lacked sufficient coverage. An independently supported elevated-use advisory can still appear. |
+
+Corroboration means commit at 90% or more (`CommitPercent`), at least 10 page reads/s (`PageReadsPerSecond`), or at least 50 pages input/s (`PagesInputPerSecond`). Both pressure rules count only samples where headroom and corroboration coincide. When the qualifying samples lack either commit or paging coverage, confidence is lower. Severe pressure reaches high confidence when both elevated commit and elevated paging sustain alongside critical headroom. The finding describes the measured pressure and its possible effect on responsiveness.
+
+Use the absolute thresholds to catch tight headroom on smaller systems. Relative thresholds scale with OS-visible RAM, and the 2 GiB cap keeps several GiB of available RAM on larger systems from triggering a pressure finding on percentage alone. The 85% threshold surfaces sustained high utilisation early. The pressure bands are configurable starting points for workstation triage. Installed memory is reported separately and is never used as the headroom denominator. [Microsoft guidance on memory performance counters](https://learn.microsoft.com/en-us/troubleshoot/windows-server/performance/troubleshoot-performance-problems-in-windows)
+
+An example advisory might read:
+
+> **Overall assessment** No clear bottleneck detected.
+>
+> **Advisory** Elevated memory utilisation. Average physical use was 86% and available RAM dropped to 1.50 GiB. Review private-memory leaders and correlate paging with the reported slowdown.
+
+An example finding might read:
+
+> **Finding** Severe memory pressure, Critical. Available RAM remained below 500 MiB during sustained high physical use with elevated commit and paging in the same samples.
 
 ## Measurements and reports
 
@@ -57,10 +81,24 @@ The CLI writes two UTF-8 files with the same filename stem containing the comput
 
 - **CPU** uses successive raw processor counter readings to measure busy time. The JSON includes per-logical-processor samples where supported. System averages are arithmetic means of available samples. The percentage above threshold uses available total CPU samples as its denominator. [Windows processor counter guidance](https://learn.microsoft.com/en-us/windows/win32/perfctrs/collecting-performance-data)
 - **Process CPU** is the difference in cumulative CPU seconds across consecutive observations of the same PID and start time, divided by elapsed sampling time and logical processor count. One fully utilised logical processor on a four-logical-processor workstation accounts for 25% of machine capacity. Process average CPU is weighted by the length of its observed intervals. Cumulative CPU in the diagnostic sums observed deltas only.
-- **Memory** uses bytes in JSON and binary units (MiB and GiB) in HTML. Physical utilisation uses the OS-visible memory denominator, while installed memory comes from the hardware inventory. Commit utilisation uses the sampled commit limit. Page reads/s measures read operations made to resolve hard page faults. Pages input/s measures the number of pages read. File-backed pages can contribute to paging activity.
-- **Process memory** reports peak private bytes and peak working set separately. Private bytes measure private allocation, which may be paged out. Working set measures resident pages and can include shared pages. When start time is inaccessible, consecutive observations with the same PID and name are grouped for memory ranking only.
+- **Memory** uses bytes in JSON and binary units (MiB and GiB) in HTML. Commit utilisation uses the sampled commit limit. Page reads/s counts read operations that resolve hard faults and pages input/s counts the pages read. File-backed reads can contribute to both. Page output/s, free and zero page list bytes, and modified page list bytes provide context from the same query where available. These counters do not attribute activity to the pagefile. [Microsoft guidance on hard faults and pagefile counters](https://learn.microsoft.com/en-us/troubleshoot/windows-client/performance/how-to-determine-the-appropriate-page-file-size-for-64-bit-versions-of-windows)
+- **Process memory** reports peak private bytes and peak working set separately. Private bytes measure private allocation, which may be paged out. Working set measures resident pages and can include shared pages. Observations with unavailable start times remain separate. Each memory ranking shows the highest single observation per unverified PID and name to avoid repeated entries.
 - **Storage** measures read and write rates as operations/s and bytes/s. Latency is reported in milliseconds and each average is weighted by the number of completed operations. An idle interval can have zero IOPS with unavailable latency. Active time is calculated from the idle-time counter and queue length is a count of outstanding requests at the sample. Drive sizes and free bytes are queried for fixed logical drives after sampling. [Physical disk raw counter reference](https://learn.microsoft.com/en-us/previous-versions/aa394308(v=vs.85))
-- **Timing and errors** use UTC timestamps and a monotonic clock for process intervals and scheduling. The first capture establishes a baseline. Sampling ends on the first capture begun at or after the duration, so the last provider calls can extend the measured window. WPBD skips missed slots rather than issuing bursts of catch-up queries. For optional providers, error records group repeated failures by source and code. Critical System event queries for the previous 24 hours run after performance sampling.
+
+### Sampling and reliability
+
+- The baseline doubles as the initial CPU provider selection. WPBD tries Processor Information first and falls back to Processor if the baseline lacks a usable total counter. It caches a successful source, retries a transient failure, and probes the alternate on the next slot after two consecutive failures. Each timed sample queries one CPU provider. A provider change or missing endpoint requires a new pair before CPU utilisation is available. Non-advancing timestamps, backward idle counters and impossible idle rates leave utilisation unavailable.
+- The sampling clock starts after the baseline. The last capture starts at or after the requested duration, so the actual duration can run slightly longer. When several slots become due, WPBD records the skipped slots and captures the latest due slot with its real timestamp. The report distinguishes previous collection exceeding a deadline from delayed scheduling.
+- Sampling quality shows scheduled, collected, missed and valid counts. The HTML summary reports sample work against the chosen interval with provider timing below it. Process and disk coverage counts indicate samples with at least one available measurement in the named category. Disk latency can be unavailable in a valid idle I/O sample.
+- Timings measure elapsed work, including provider calls and sample conversion. They do not measure WPBD's share of machine CPU usage. The JSON separates inventory, baseline, timed sample work and post-sampling inventory. Performance queries request a two-second CIM timeout. Timeout handling depends on the Windows provider. Optional provider errors are grouped by source and code. Critical System event queries run after sampling.
+
+### JSON compatibility
+
+Schema `0.2` retains the existing top-level fields, findings, measurement keys and statistics. New top-level fields are `Advisories`, `MemoryAssessment`, `SamplingQuality` and `CollectionTiming`. `Assessment.AdvisoryCount` counts advisories. Memory pressure findings retain `Category = 'Memory pressure'` and add `Classification` for the potential or severe tier.
+
+Samples add the scheduled offset, CPU provider, CPU status and measured CPU interval, collection timing and optional memory context. `Configuration.ProcessorCounterClass` is the most recent successfully selected provider. Compare sample-level provider names to see which provider was queried at each point. `StartedUtc` and `ActualDurationSeconds` describe the window after baseline collection. `SamplingQuality.MissedSampleCount` counts skipped slots. A `MissedSlots` collection error counts overrun or scheduling incidents, which can span multiple slots.
+
+`Statistics.Memory.PressureSamples` and `PressureWithPagingSamples` now include both potential and severe qualifying samples. The severe subset has its own count. Relative headroom and new supporting measurements have individual coverage counts. Unverified process sightings now count separately in `Statistics.Processes.ObservedInstances`. Other existing keys keep their shapes. Missing measurements remain JSON `null`.
 
 ## Limitations
 
@@ -68,7 +106,8 @@ The CLI writes two UTF-8 files with the same filename stem containing the comput
 - Process CPU requires two valid observations. Protected processes and processes that start or exit between samples can have incomplete measurements. Executable paths are resolved after sampling for matching processes still running.
 - Physical disk data uses Windows provider instances. Virtual machines and storage controllers expose the counters visible to Windows. Ideal latency varies by device, workload and storage stack.
 - A short interval and long window can produce a large JSON file on machines with many processes. The engine retains samples in memory until analysis and export finish.
-- The engine runs locally. Version 0.1 covers CPU, memory, storage and processes. The module returns structured objects for a future frontend.
+- Available paging counters cannot identify the files responsible for hard faults. A slow or unavailable CIM provider can reduce coverage, and a provider timeout may extend a sample.
+- The engine runs locally. The module returns structured objects for a future frontend.
 
 ## Run the tests
 

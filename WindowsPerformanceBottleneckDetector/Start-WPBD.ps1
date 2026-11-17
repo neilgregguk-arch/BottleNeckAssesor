@@ -25,11 +25,16 @@ if (-not $NoReport) {
 }
 
 Import-Module "$PSScriptRoot/src/WPBD.psm1" -ErrorAction Stop
-Write-Host "WPBD 0.1 | Sampling for $DurationSeconds seconds at $SampleIntervalSeconds-second intervals."
+Write-Host "WPBD 0.2 | Sampling for $DurationSeconds seconds at $SampleIntervalSeconds-second intervals."
 $metrics = Get-WpbdMetrics -DurationSeconds $DurationSeconds -SampleIntervalSeconds $SampleIntervalSeconds
 Write-Host 'Analysing measurements...'
 $diagnostic = Get-WpbdAnalysis -Metrics $metrics
 Write-Host $diagnostic.Assessment.Summary
+foreach ($advisory in $diagnostic.Advisories) {
+    Write-Host "Advisory | $($advisory.Category)"
+}
+$quality = $diagnostic.SamplingQuality
+Write-Host "Samples | $($quality.ActualSamples)/$($quality.ExpectedSamples) collected, $($quality.ValidSamples.CpuTotal) with valid total CPU, $($quality.MissedSampleCount) missed."
 if (-not $NoReport) {
     Write-Host 'Writing reports...'
     $paths = Export-WpbdReport -Diagnostic $diagnostic -OutputPath $OutputPath

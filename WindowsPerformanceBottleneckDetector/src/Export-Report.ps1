@@ -35,6 +35,24 @@ function New-WpbdStatisticsTable {
     New-WpbdHtmlTable @('Measurement', 'Average', 'Minimum', 'Maximum', 'Samples') $rows
 }
 
+function New-WpbdHtmlFindings {
+    param($Findings)
+    foreach ($finding in $Findings) {
+        $title = if ($finding.Classification) { $finding.Classification } else { $finding.Category }
+        $category = ConvertTo-WpbdHtmlText $title
+        $severity = ConvertTo-WpbdHtmlText $finding.Severity
+        $confidence = ConvertTo-WpbdHtmlText $finding.Confidence
+        $observed = ConvertTo-WpbdHtmlText $finding.Observed
+        $explanation = ConvertTo-WpbdHtmlText $finding.Explanation
+        $next = ConvertTo-WpbdHtmlText $finding.SuggestedInvestigation
+        @"
+<article class="finding"><h3>$category</h3><p class="meta">$severity &middot; $confidence confidence</p>
+<dl><dt>Observed</dt><dd>$observed</dd><dt>Interpretation</dt><dd>$explanation</dd>
+<dt>Suggested investigation</dt><dd>$next</dd></dl></article>
+"@
+    }
+}
+
 function ConvertTo-WpbdHtmlReport {
     param($Diagnostic)
     $system = $Diagnostic.System
@@ -44,8 +62,50 @@ function ConvertTo-WpbdHtmlReport {
     $start = ConvertTo-WpbdHtmlText $Diagnostic.StartedUtc
     $end = ConvertTo-WpbdHtmlText $Diagnostic.CompletedUtc
     $duration = Format-WpbdNumber $Diagnostic.ActualDurationSeconds
-    $sampleCount = $Diagnostic.Samples.Count
-    $expected = ConvertTo-WpbdHtmlText $Diagnostic.Configuration.ExpectedSamples
+    $quality = $Diagnostic.SamplingQuality
+    $timing = $Diagnostic.CollectionTiming
+    $sampleCount = ConvertTo-WpbdHtmlText $quality.ActualSamples
+    $expected = ConvertTo-WpbdHtmlText $quality.ExpectedSamples
+    $missed = ConvertTo-WpbdHtmlText $quality.MissedSampleCount
+    $slow = ConvertTo-WpbdHtmlText $quality.SamplesOverInterval
+    $interval = Format-WpbdNumber $Diagnostic.Configuration.SampleIntervalSeconds
+    $maxWork = Format-WpbdNumber $timing.SampleWorkSeconds.Maximum
+    $averageWork = Format-WpbdNumber $timing.SampleWorkSeconds.Average
+    $maxDelay = Format-WpbdNumber $timing.SampleStartDelaySeconds.Maximum
+    $baselineSeconds = Format-WpbdNumber $timing.Baseline.CaptureSeconds
+    $samplingNote = if ($quality.SamplesOverInterval -gt 0) {
+        '<p>Collection exceeded the selected interval in some samples. Provider times and missed slot details show where the schedule was affected.</p>'
+    }
+    $validRows = @(
+        ,@('Total CPU', $quality.ValidSamples.CpuTotal)
+        ,@('Per-logical-processor CPU', $quality.ValidSamples.LogicalCpu)
+        ,@('Available memory', $quality.ValidSamples.MemoryAvailable)
+        ,@('Physical memory utilisation', $quality.ValidSamples.MemoryUtilisation)
+        ,@('Commit utilisation', $quality.ValidSamples.MemoryCommit)
+        ,@('Page reads/s', $quality.ValidSamples.PageReads)
+        ,@('Pages input/s', $quality.ValidSamples.PagesInput)
+        ,@('Disk I/O rates', $quality.ValidSamples.DiskIo)
+        ,@('Disk latency', $quality.ValidSamples.DiskLatency)
+        ,@('Process observations', $quality.ValidSamples.Processes)
+        ,@('Process CPU utilisation', $quality.ValidSamples.ProcessCpu)
+    )
+    $validTable = New-WpbdHtmlTable @('Measurement', 'Valid samples') $validRows
+    $providerTable = New-WpbdStatisticsTable $timing.ProviderSeconds @(
+        @('Cpu', 'CPU (s)', 1), @('Memory', 'Memory (s)', 1),
+        @('Disk', 'Physical disk (s)', 1), @('Processes', 'Processes (s)', 1)
+    )
+    $missedRows = @(foreach ($range in $quality.MissedSlots) {
+        $reason = switch ($range.Reason) {
+            'PreviousCaptureOverran' { 'Previous collection ran past the deadline' }
+            'SchedulerDelay' { 'Sampling resumed after the scheduled deadline' }
+            default { $range.Reason }
+        }
+        ,@($range.FirstSlot, $range.LastSlot, $range.Count, $reason, (Format-WpbdNumber $range.PreviousWorkEndSeconds),
+            (Format-WpbdNumber $range.ObservedElapsedSeconds))
+    })
+    $missedDetails = if ($missedRows.Count) {
+        New-WpbdHtmlTable @('First missed slot', 'Last missed slot', 'Count', 'Reason', 'Previous work ended (s)', 'Schedule resumed (s)') $missedRows
+    }
     $systemRows = @(
         ,@('Windows', ("$($system.WindowsCaption) $($system.WindowsVersion) (build $($system.WindowsBuild))").Trim())
         ,@('Hardware', ("$($system.Manufacturer) $($system.Model)").Trim())
@@ -61,31 +121,35 @@ function ConvertTo-WpbdHtmlReport {
         if ([string]::IsNullOrWhiteSpace([string] $row[1]) -or $row[1] -eq '(build )') { $row[1] = 'Unavailable' }
     }
     $systemTable = New-WpbdHtmlTable @('System information', 'Value') $systemRows
-    $findings = foreach ($finding in $Diagnostic.Findings) {
-        $category = ConvertTo-WpbdHtmlText $finding.Category
-        $severity = ConvertTo-WpbdHtmlText $finding.Severity
-        $confidence = ConvertTo-WpbdHtmlText $finding.Confidence
-        $observed = ConvertTo-WpbdHtmlText $finding.Observed
-        $explanation = ConvertTo-WpbdHtmlText $finding.Explanation
-        $next = ConvertTo-WpbdHtmlText $finding.SuggestedInvestigation
-        @"
-<article class="finding"><h3>$category</h3><p class="meta">$severity &middot; $confidence confidence</p>
-<dl><dt>Observed</dt><dd>$observed</dd><dt>Interpretation</dt><dd>$explanation</dd>
-<dt>Suggested investigation</dt><dd>$next</dd></dl></article>
-"@
+    $findings = New-WpbdHtmlFindings ($Diagnostic.Findings | Where-Object {
+        $_.Category -notin @('No clear bottleneck detected', 'Insufficient diagnostic data')
+    })
+    if (-not $findings) { $findings = '<p>No significant findings met the diagnostic rules.</p>' }
+    $advisories = New-WpbdHtmlFindings $Diagnostic.Advisories
+    if (-not $advisories) { $advisories = '<p>No advisories recorded.</p>' }
+    $insufficient = New-WpbdHtmlFindings ($Diagnostic.Findings | Where-Object { $_.Category -eq 'Insufficient diagnostic data' })
+    $evidenceSection = if ($insufficient) { '<section><h2>Insufficient evidence</h2>' + ($insufficient -join '') + '</section>' }
+    $normal = $Diagnostic.Findings | Where-Object { $_.Category -eq 'No clear bottleneck detected' }
+    $repeatGuidance = if ($normal -and -not $Diagnostic.Advisories.Count) {
+        '<p>' + (ConvertTo-WpbdHtmlText $normal.SuggestedInvestigation) + '</p>'
     }
     $cpu = New-WpbdStatisticsTable $stats (,@('Cpu', 'Total CPU utilisation (%)', 1))
     $cpuThreshold = ConvertTo-WpbdHtmlText $Diagnostic.Thresholds.CpuPercent
     $highCpu = Format-WpbdNumber $stats.Cpu.PercentAboveThreshold
     $memory = New-WpbdStatisticsTable $stats.Memory @(
         @('AvailableBytes', 'Available physical memory (MiB)', 1MB),
+        @('AvailablePercent', 'Available OS-visible memory (%)', 1),
         @('UsedPercent', 'Physical memory utilisation (%)', 1),
         @('CommittedBytes', 'Committed memory (GiB)', 1GB),
         @('CommitLimitBytes', 'Commit limit (GiB)', 1GB),
         @('CommitPercent', 'Commit utilisation (%)', 1),
         @('PageReadsPerSecond', 'Page reads/s', 1),
-        @('PagesInputPerSecond', 'Pages input/s', 1)
+        @('PagesInputPerSecond', 'Pages input/s', 1),
+        @('PagesOutputPerSecond', 'Pages output/s', 1),
+        @('FreeAndZeroPageListBytes', 'Free and zero page lists (MiB)', 1MB),
+        @('ModifiedPageListBytes', 'Modified page list (MiB)', 1MB)
     )
+    $memoryCategory = ConvertTo-WpbdHtmlText $Diagnostic.MemoryAssessment.Category
     $disks = foreach ($disk in $stats.Disks) {
         "<h3>$(ConvertTo-WpbdHtmlText $disk.Name)</h3>"
         New-WpbdStatisticsTable $disk @(
@@ -116,13 +180,14 @@ function ConvertTo-WpbdHtmlReport {
     )) {
         $rows = @(foreach ($process in $stats.Processes.Leaders.($ranking[0])) {
             $path = if ($process.Path) { $process.Path } else { 'Unavailable' }
-            ,@($process.Name, $process.Id, (Format-WpbdNumber $process.AverageCpuPercent),
+            $identity = if ($process.StartUtc) { $process.StartUtc } else { 'Unavailable' }
+            ,@($process.Name, $process.Id, $identity, (Format-WpbdNumber $process.AverageCpuPercent),
                 (Format-WpbdNumber $process.PeakCpuPercent), (Format-WpbdNumber $process.CumulativeCpuSeconds),
                 (Format-WpbdNumber $process.PeakPrivateBytes 1MB), (Format-WpbdNumber $process.PeakWorkingSetBytes 1MB), $path)
         })
         "<h3>$($ranking[1])</h3>"
         if ($rows.Count -eq 0) { '<p>Measurements unavailable.</p>'; continue }
-        New-WpbdHtmlTable @('Process', 'PID', 'Average CPU (%)', 'Peak CPU (%)', 'CPU time (s)',
+        New-WpbdHtmlTable @('Process', 'PID', 'Start (UTC)', 'Average CPU (%)', 'Peak CPU (%)', 'CPU time (s)',
             'Private peak (MiB)', 'Working set peak (MiB)', 'Executable path') $rows
     }
     $eventRows = @(foreach ($event in $Diagnostic.CriticalSystemEvents) {
@@ -152,11 +217,20 @@ function ConvertTo-WpbdHtmlReport {
     $logicalCpu = if ($logicalCpuCount) { "$logicalCpuCount logical processor counter instances with measurements in JSON." }
     else { 'Per-logical-processor utilisation unavailable.' }
     $trendRows = @(foreach ($sample in $Diagnostic.Samples) {
-        ,@($sample.TimestampUtc, (Format-WpbdNumber $sample.ElapsedSeconds),
-            (Format-WpbdNumber $sample.CpuTotalPercent), (Format-WpbdNumber $sample.Memory.AvailableBytes 1MB))
+        $latencies = foreach ($disk in $sample.Disks) {
+            if ($null -ne $disk.ReadLatencyMs -or $null -ne $disk.WriteLatencyMs) {
+                '{0} (read {1}, write {2})' -f $disk.Name, (Format-WpbdNumber $disk.ReadLatencyMs),
+                    (Format-WpbdNumber $disk.WriteLatencyMs)
+            }
+        }
+        $diskLatency = if ($latencies) { $latencies -join ' | ' } else { 'Unavailable' }
+        ,@($sample.Slot, $sample.TimestampUtc, (Format-WpbdNumber $sample.ElapsedSeconds),
+            (Format-WpbdNumber $sample.CpuTotalPercent), (Format-WpbdNumber $sample.Memory.UsedPercent),
+            (Format-WpbdNumber $sample.Memory.AvailableBytes 1MB), (Format-WpbdNumber $sample.Memory.PageReadsPerSecond), $diskLatency)
     })
     $trend = if ($trendRows.Count) {
-        New-WpbdHtmlTable @('Sample start (UTC)', 'Elapsed (s)', 'Total CPU (%)', 'Available RAM (MiB)') $trendRows
+        New-WpbdHtmlTable @('Slot', 'Sample start (UTC)', 'Elapsed (s)', 'Total CPU (%)', 'Physical memory (%)',
+            'Available RAM (MiB)', 'Page reads/s', 'Disk latency (ms)') $trendRows
     } else { '<p>Time series unavailable.</p>' }
     @"
 <!doctype html>
@@ -182,15 +256,25 @@ th{background:#e9f1f6} tbody tr:nth-child(even){background:#f5f8fa} summary{curs
 <body>
 <header>
 <h1>Windows Performance Bottleneck Detector</h1>
-<p><strong>$computer</strong> &middot; Version 0.1</p>
-<p class="meta">$start to $end &middot; $duration s &middot; $sampleCount of $expected scheduled samples</p>
+<p><strong>$computer</strong> &middot; Version 0.2</p>
+<p class="meta">$start to $end &middot; $duration s elapsed</p>
 <p class="assessment">$assessment</p>
+<p>$sampleCount of $expected scheduled samples collected &middot; $missed missed</p>
+$repeatGuidance
 </header>
 <main>
-<section><h2>Findings</h2>$($findings -join "`n")</section>
+<section><h2>Significant findings</h2>$($findings -join "`n")</section>
+<section><h2>Advisories</h2>$($advisories -join "`n")</section>
+$evidenceSection
+<section><h2>Sampling quality</h2><p>The configured interval was $interval s. Sample collection and conversion averaged $averageWork s and peaked at $maxWork s. $slow samples exceeded the interval.</p>
+<p>The baseline took $baselineSeconds s. The maximum sample start delay was $maxDelay s.</p>
+$samplingNote
+$missedDetails
+$validTable
+<details><summary>Provider timing</summary>$providerTable</details></section>
 <section><h2>Computer</h2>$systemTable</section>
 <section><h2>CPU</h2>$cpu<p>Samples above $cpuThreshold% utilisation as a percentage of usable samples &middot; $highCpu</p><p>$logicalCpu</p></section>
-<section><h2>Memory</h2>$memory</section>
+<section><h2>Memory</h2><p>$memoryCategory</p><p>Hard page reads and page input can include file-backed data. Page output and page-list measurements provide context.</p>$memory</section>
 <section><h2>Storage</h2><p>Latency averages are weighted by completed operations. Latency can be unavailable when no operations complete in the interval.</p>
 $($disks -join "`n")<h3>Fixed-volume capacity</h3>$drives</section>
 <section><h2>Top processes</h2><p>CPU percentages are relative to total machine capacity. Average CPU uses observed intervals for each process. Private bytes measure process-private allocation. Working set measures pages resident at the sample time and can include shared pages.</p>

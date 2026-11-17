@@ -8,6 +8,12 @@ function Get-WpbdThresholds {
         CpuPercent = 85
         AvailableMemoryBytes = 500MB
         MemoryUsedPercent = 90
+        MemoryElevatedUsedPercent = 85
+        MemoryElevatedAvailableBytes = 1GB
+        MemoryPressureAvailableBytes = 768MB
+        MemoryPressureAvailablePercent = 8
+        MemorySevereAvailablePercent = 1
+        MemoryRelativeHeadroomCapBytes = 2GB
         CommitPercent = 90
         PageReadsPerSecond = 10
         PagesInputPerSecond = 50
@@ -41,17 +47,12 @@ function New-WpbdFinding {
 function Get-WpbdProcessStatistics {
     param($Samples, $Paths, $LogicalProcessorCount)
     $groups = @{}
-    $previousUnknown = @{}
     foreach ($sample in $Samples) {
-        $currentUnknown = @{}
         foreach ($row in $sample.Processes) {
             $key = "$($row.Id)/$($row.StartUtc)"
             if (-not $row.StartUtc) {
-                # Best-effort memory grouping for consecutive sightings of protected processes.
-                $identity = "$($row.Id)/$($row.Name)"
-                $key = $previousUnknown[$identity]
-                if (-not $key) { $key = "unknown/$identity/$($sample.Slot)" }
-                $currentUnknown[$identity] = $key
+                # A PID and name alone do not identify a process across captures.
+                $key = "unknown/$($row.Id)/$($sample.Slot)"
             }
             if (-not $groups.ContainsKey($key)) {
                 $groups[$key] = [pscustomobject]@{
@@ -64,7 +65,7 @@ function Get-WpbdProcessStatistics {
             }
             $entry = $groups[$key]
             $entry.Observations++
-            if ($null -ne $row.CpuSeconds -and $row.CpuIntervalSeconds -gt 0) {
+            if ($row.StartUtc -and $null -ne $row.CpuSeconds -and $row.CpuIntervalSeconds -gt 0) {
                 $entry.CpuIntervals++
                 $entry.ObservedCpuIntervalSeconds += $row.CpuIntervalSeconds
                 $entry.CumulativeCpuSeconds = [double] $entry.CumulativeCpuSeconds + $row.CpuSeconds
@@ -78,7 +79,6 @@ function Get-WpbdProcessStatistics {
                 }
             }
         }
-        $previousUnknown = $currentUnknown
     }
     foreach ($entry in $groups.Values) {
         $entry.AverageCpuPercent = Get-WpbdRatio $entry.CumulativeCpuSeconds `
@@ -86,14 +86,153 @@ function Get-WpbdProcessStatistics {
     }
     $leaders = [ordered]@{}
     foreach ($property in @('AverageCpuPercent', 'PeakCpuPercent', 'CumulativeCpuSeconds', 'PeakPrivateBytes', 'PeakWorkingSetBytes')) {
+        $seenUnknown = @{}
         $leaders[$property] = @($groups.Values | Where-Object { $null -ne $_.$property } |
-            Sort-Object @{ Expression = $property; Descending = $true }, Name, Id, StartUtc | Select-Object -First 10)
+            Sort-Object @{ Expression = $property; Descending = $true }, Name, Id, StartUtc |
+            Where-Object {
+                if ($_.StartUtc) { return $true }
+                $key = "$($_.Id)/$($_.Name)"
+                if ($seenUnknown.ContainsKey($key)) { return $false }
+                $seenUnknown[$key] = $true
+                $true
+            } | Select-Object -First 10)
     }
     [pscustomobject]@{
         ObservedInstances = $groups.Count
         InstancesWithCpuIntervals = @($groups.Values | Where-Object { $_.CpuIntervals -gt 0 }).Count
         InstancesWithMissingPath = @($groups.Values | Where-Object { -not $_.Path }).Count
         Leaders = [pscustomobject] $leaders
+    }
+}
+
+function Test-WpbdSustained {
+    param($Count, $Usable, $Thresholds)
+    $Count -ge $Thresholds.MinimumSamples -and $Count -ge $Usable * $Thresholds.SustainedFraction
+}
+
+function Get-WpbdMemoryAssessment {
+    param($Rows, $VisibleBytes, $Thresholds, $Required)
+    $stats = [ordered]@{}
+    foreach ($name in @('AvailableBytes', 'CommittedBytes', 'CommitLimitBytes', 'CommitPercent',
+            'PageReadsPerSecond', 'PagesInputPerSecond', 'FreeAndZeroPageListBytes', 'ModifiedPageListBytes',
+            'PagesOutputPerSecond')) {
+        $stats[$name] = Get-WpbdStatistics $Rows $name
+    }
+    $physical = New-Object 'System.Collections.Generic.List[object]'
+    $counts = [ordered]@{
+        HeadroomSamples = 0; CompleteHeadroomSamples = 0; AssessableSamples = 0
+        ElevatedSamples = 0; PressureSamples = 0; PressureWithPagingSamples = 0; PressureWithCommitSamples = 0
+        PressureWithCompleteEvidenceSamples = 0; SeverePressureSamples = 0
+        SevereWithCompleteEvidenceSamples = 0; SevereWithPagingAndCommitSamples = 0
+        ReducedHeadroomWithUncertainSupportSamples = 0
+    }
+    foreach ($row in $Rows) {
+        $available = $row.AvailableBytes
+        $used = $row.UsedPercent
+        $percent = $null
+        if ($null -ne $available -and $VisibleBytes -gt 0 -and $available -le $VisibleBytes) {
+            $percent = Get-WpbdRatio $available $VisibleBytes 100
+            $used = 100 - $percent
+        }
+        $physical.Add([pscustomobject]@{ AvailablePercent = $percent; UsedPercent = $used })
+        if ($null -eq $available -and $null -eq $used) { continue }
+        $counts.HeadroomSamples++
+        $completeHeadroom = $null -ne $available -and $null -ne $used
+        $hasPaging = $null -ne $row.PageReadsPerSecond -or $null -ne $row.PagesInputPerSecond
+        $hasCommit = $null -ne $row.CommitPercent
+        if ($completeHeadroom) {
+            $counts.CompleteHeadroomSamples++
+            if ($hasCommit -or $hasPaging) { $counts.AssessableSamples++ }
+        }
+        $elevated = $used -ge $Thresholds.MemoryElevatedUsedPercent -or
+            ($null -ne $available -and $available -le $Thresholds.MemoryElevatedAvailableBytes)
+        $useRelative = $null -ne $percent -and $available -le $Thresholds.MemoryRelativeHeadroomCapBytes
+        $criticalHeadroom = ($null -ne $available -and $available -lt $Thresholds.AvailableMemoryBytes) -or
+            ($useRelative -and $percent -le $Thresholds.MemorySevereAvailablePercent)
+        $reduced = $criticalHeadroom -or
+            ($null -ne $available -and $available -le $Thresholds.MemoryPressureAvailableBytes) -or
+            ($useRelative -and $percent -le $Thresholds.MemoryPressureAvailablePercent)
+        if ($elevated -or $reduced) { $counts.ElevatedSamples++ }
+        if (-not $reduced) { continue }
+
+        $commit = $row.CommitPercent -ge $Thresholds.CommitPercent
+        $paging = $row.PageReadsPerSecond -ge $Thresholds.PageReadsPerSecond -or
+            $row.PagesInputPerSecond -ge $Thresholds.PagesInputPerSecond
+        if (-not ($commit -or $paging)) {
+            if (-not $hasCommit -or -not $hasPaging) { $counts.ReducedHeadroomWithUncertainSupportSamples++ }
+            continue
+        }
+        $counts.PressureSamples++
+        if ($paging) { $counts.PressureWithPagingSamples++ }
+        if ($commit) { $counts.PressureWithCommitSamples++ }
+        $completeEvidence = $completeHeadroom -and $hasCommit -and $hasPaging
+        if ($completeEvidence) { $counts.PressureWithCompleteEvidenceSamples++ }
+        if ($criticalHeadroom -and $used -ge $Thresholds.MemoryUsedPercent) {
+            $counts.SeverePressureSamples++
+            if ($completeEvidence) { $counts.SevereWithCompleteEvidenceSamples++ }
+            if ($commit -and $paging) { $counts.SevereWithPagingAndCommitSamples++ }
+        }
+    }
+    $stats.AvailablePercent = Get-WpbdStatistics $physical.ToArray() 'AvailablePercent'
+    $stats.UsedPercent = Get-WpbdStatistics $physical.ToArray() 'UsedPercent'
+    foreach ($name in $counts.Keys) { $stats[$name] = $counts[$name] }
+    $stats = [pscustomobject] $stats
+    $usable = $stats.HeadroomSamples
+    $coverageGap = $null
+    $finding = $null
+    $advisory = $null
+    $classification = 'Insufficient memory data'
+    $confidence = 'Low'
+    $severity = 'Information'
+    $investigation = 'Review the largest private-memory consumers and correlate commit and paging with the reported slowdown.'
+    $observed = "$usable samples contained physical memory utilisation or available RAM."
+    $summaryParts = @(
+        if ($stats.UsedPercent.Count) { 'Average physical memory utilisation was {0:N1}%.' -f $stats.UsedPercent.Average }
+        if ($stats.AvailableBytes.Count) { 'Available RAM dropped to {0:N2} GiB.' -f ($stats.AvailableBytes.Minimum / 1GB) }
+    )
+    $summary = $summaryParts -join ' '
+    $interpretation = 'Available measurements cannot support a memory assessment.'
+    if ($usable -lt $Required) {
+        $coverageGap = "Memory headroom ($usable usable samples, $Required required)"
+    } elseif (Test-WpbdSustained $stats.PressureSamples $usable $Thresholds) {
+        $classification = 'Potential memory pressure'
+        $severity = 'Warning'
+        if (Test-WpbdSustained $stats.PressureWithCompleteEvidenceSamples $usable $Thresholds) { $confidence = 'Medium' }
+        $observed = "$($stats.PressureSamples) of $usable usable samples showed reduced available RAM with elevated commit or hard paging in the same sample. $summary"
+        $interpretation = 'Sustained reduced headroom with corroborating evidence may be contributing to reduced responsiveness.'
+        if (Test-WpbdSustained $stats.SeverePressureSamples $usable $Thresholds) {
+            $classification = 'Severe memory pressure'
+            $severity = 'Critical'
+            $confidence = 'Low'
+            if (Test-WpbdSustained $stats.SevereWithCompleteEvidenceSamples $usable $Thresholds) { $confidence = 'Medium' }
+            if (Test-WpbdSustained $stats.SevereWithPagingAndCommitSamples $usable $Thresholds) { $confidence = 'High' }
+            $observed = "$($stats.SeverePressureSamples) of $usable usable samples showed critically low available RAM, high physical use and elevated commit or hard paging together. $summary"
+            $interpretation = 'Sustained critically low headroom and supporting measurements indicate severe memory pressure during the diagnostic window.'
+        }
+        $finding = New-WpbdFinding 'Memory pressure' $severity $confidence $stats $observed $interpretation $investigation
+        $finding | Add-Member -NotePropertyName Classification -NotePropertyValue $classification
+    } else {
+        if ($stats.CompleteHeadroomSamples -lt $Required) {
+            $coverageGap = "Memory utilisation and availability ($($stats.CompleteHeadroomSamples) paired samples, $Required required)"
+        } elseif (Test-WpbdSustained $stats.ReducedHeadroomWithUncertainSupportSamples $usable $Thresholds) {
+            $coverageGap = 'Memory pressure corroboration (commit or paging counters were unavailable during sustained low headroom)'
+        }
+        if (Test-WpbdSustained $stats.ElevatedSamples $usable $Thresholds) {
+            $classification = 'Elevated memory utilisation'
+            if (-not $coverageGap -and $stats.AssessableSamples -ge $Required) { $confidence = 'Medium' }
+            $observed = "$($stats.ElevatedSamples) of $usable usable samples showed high physical use or reduced available headroom. $summary"
+            $interpretation = 'The measurements establish elevated use or reduced headroom. Evidence for sustained memory pressure is limited.'
+            $advisory = New-WpbdFinding $classification 'Information' $confidence $stats $observed $interpretation $investigation
+        } elseif (-not $coverageGap) {
+            $classification = 'Normal memory operation'
+            $confidence = 'Medium'
+            $observed = $summary
+            $interpretation = 'Physical memory headroom was adequate across the sampled workload.'
+        }
+    }
+    [pscustomobject]@{
+        Statistics = $stats; Finding = $finding; Advisory = $advisory; CoverageGap = $coverageGap
+        Assessment = New-WpbdFinding $classification $severity $confidence $stats $observed $interpretation $investigation
     }
 }
 
@@ -113,6 +252,52 @@ function Get-WpbdDiskLatencyStatistics {
     [pscustomobject]@{
         Count = $stats.Count; Average = Get-WpbdRatio $totalMs $operations
         Minimum = $stats.Minimum; Maximum = $stats.Maximum; Operations = $operations
+    }
+}
+
+function Get-WpbdSamplingSummary {
+    param($Metrics, $Samples, $Expected, $Cpu, $Memory)
+    $valid = [ordered]@{
+        CpuTotal = $Cpu.Count; LogicalCpu = 0; MemoryAvailable = $Memory.AvailableBytes.Count
+        MemoryUtilisation = $Memory.UsedPercent.Count; MemoryAssessable = $Memory.AssessableSamples
+        MemoryCommit = $Memory.CommitPercent.Count; PageReads = $Memory.PageReadsPerSecond.Count
+        PagesInput = $Memory.PagesInputPerSecond.Count
+        DiskIo = 0; DiskLatency = 0; Processes = 0; ProcessCpu = 0
+    }
+    $interval = $Metrics.Configuration.SampleIntervalSeconds
+    $timed = New-Object 'System.Collections.Generic.List[object]'
+    $overInterval = 0
+    foreach ($sample in $Samples) {
+        if ($sample.LogicalProcessors | Where-Object { $null -ne $_.Percent } | Select-Object -First 1) { $valid.LogicalCpu++ }
+        if ($sample.Disks | Where-Object { $null -ne $_.ReadsPerSecond -or $null -ne $_.WritesPerSecond } | Select-Object -First 1) { $valid.DiskIo++ }
+        if ($sample.Disks | Where-Object { $null -ne $_.ReadLatencyMs -or $null -ne $_.WriteLatencyMs } | Select-Object -First 1) { $valid.DiskLatency++ }
+        if ($sample.Processes.Count -gt 0) { $valid.Processes++ }
+        if ($sample.Processes | Where-Object { $null -ne $_.CpuPercent } | Select-Object -First 1) { $valid.ProcessCpu++ }
+        if ($null -ne $sample.CollectionTiming.TotalSeconds) {
+            $timed.Add($sample.CollectionTiming)
+            if ($interval -gt 0 -and $sample.CollectionTiming.TotalSeconds -gt $interval) { $overInterval++ }
+        }
+    }
+    $timings = $timed.ToArray()
+    $providers = [ordered]@{}
+    foreach ($source in @('Cpu', 'Memory', 'Disk', 'Processes')) {
+        $providers[$source] = Get-WpbdStatistics $timings.ProviderSeconds $source
+    }
+    [pscustomobject]@{
+        Quality = [pscustomobject]@{
+            ExpectedSamples = $Expected; ActualSamples = $Samples.Count; MissedSampleCount = $Expected - $Samples.Count
+            MissedSlots = @($Metrics.MissedSlots | Where-Object { $null -ne $_ })
+            ValidSamples = [pscustomobject] $valid
+            SamplesOverInterval = $overInterval
+        }
+        Timing = [pscustomobject]@{
+            InventorySeconds = $Metrics.CollectionTiming.InventorySeconds
+            Baseline = $Metrics.CollectionTiming.Baseline
+            PostSamplingSeconds = $Metrics.CollectionTiming.PostSamplingSeconds
+            SampleWorkSeconds = Get-WpbdStatistics $timings 'TotalSeconds'
+            SampleStartDelaySeconds = Get-WpbdStatistics $timings 'StartDelaySeconds'
+            ProviderSeconds = [pscustomobject] $providers
+        }
     }
 }
 
@@ -165,44 +350,11 @@ function Get-WpbdAnalysis {
     }
 
     $memoryRows = @($samples.Memory | Where-Object { $null -ne $_ })
-    $memory = [pscustomobject]@{
-        AvailableBytes = Get-WpbdStatistics $memoryRows 'AvailableBytes'
-        UsedPercent = Get-WpbdStatistics $memoryRows 'UsedPercent'
-        CommittedBytes = Get-WpbdStatistics $memoryRows 'CommittedBytes'
-        CommitLimitBytes = Get-WpbdStatistics $memoryRows 'CommitLimitBytes'
-        CommitPercent = Get-WpbdStatistics $memoryRows 'CommitPercent'
-        PageReadsPerSecond = Get-WpbdStatistics $memoryRows 'PageReadsPerSecond'
-        PagesInputPerSecond = Get-WpbdStatistics $memoryRows 'PagesInputPerSecond'
-        AssessableSamples = 0; PressureSamples = 0; PressureWithPagingSamples = 0
-    }
-    foreach ($row in $memoryRows) {
-        $hasPaging = $null -ne $row.PageReadsPerSecond -or $null -ne $row.PagesInputPerSecond
-        if ($null -eq $row.AvailableBytes -or $null -eq $row.UsedPercent -or
-                ($null -eq $row.CommitPercent -and -not $hasPaging)) { continue }
-        $memory.AssessableSamples++
-        $low = $row.AvailableBytes -lt $thresholds.AvailableMemoryBytes
-        $used = $row.UsedPercent -ge $thresholds.MemoryUsedPercent
-        $commit = $row.CommitPercent -ge $thresholds.CommitPercent
-        $paging = $row.PageReadsPerSecond -ge $thresholds.PageReadsPerSecond -or
-            $row.PagesInputPerSecond -ge $thresholds.PagesInputPerSecond
-        if ($low -and $used -and ($commit -or $paging)) {
-            $memory.PressureSamples++
-            if ($paging) { $memory.PressureWithPagingSamples++ }
-        }
-    }
-    if ($memory.AssessableSamples -lt $required) {
-        $gaps.Add("Memory pressure ($($memory.AssessableSamples) usable samples, $required required)")
-    } elseif ($memory.PressureSamples -ge $thresholds.MinimumSamples -and
-            $memory.PressureSamples / $memory.AssessableSamples -ge $thresholds.SustainedFraction) {
+    $memory = Get-WpbdMemoryAssessment $memoryRows $Metrics.System.VisibleMemoryBytes $thresholds $required
+    if ($memory.CoverageGap) { $gaps.Add($memory.CoverageGap) }
+    if ($memory.Finding) {
         $issues.Add('Memory pressure')
-        $sustainedPaging = $memory.PressureWithPagingSamples -ge $thresholds.MinimumSamples -and
-            $memory.PressureWithPagingSamples / $memory.AssessableSamples -ge $thresholds.SustainedFraction
-        $severity = if ($sustainedPaging) { 'Critical' } else { 'Warning' }
-        $confidence = if ($sustainedPaging) { 'High' } else { 'Medium' }
-        $findings.Add((New-WpbdFinding 'Memory pressure' $severity $confidence $memory `
-            "Low available RAM, high physical use and elevated commit or paging occurred together in $($memory.PressureSamples) of $($memory.AssessableSamples) usable samples. Paging was elevated in $($memory.PressureWithPagingSamples) of those pressure samples." `
-            'Memory pressure may be contributing to reduced responsiveness.' `
-            'Review private-memory leaders and correlate hard paging and commit usage with the affected workload.'))
+        $findings.Add($memory.Finding)
     }
 
     $diskGroups = $samples.Disks | Where-Object { $_.Name } | Group-Object Name | Sort-Object Name
@@ -276,17 +428,24 @@ function Get-WpbdAnalysis {
     $summary = "$category."
     if ($issues.Count -gt 1) { $summary = "$summary $($issues -join ', ')." }
     if ($issues.Count -gt 0 -and $gaps.Count -gt 0) { $summary = "$summary Some areas had insufficient data." }
+    $advisories = @()
+    if ($memory.Advisory) { $advisories = @($memory.Advisory) }
+    $sampling = Get-WpbdSamplingSummary $Metrics $samples $expected $cpu $memory.Statistics
     [pscustomobject]@{
-        SchemaVersion = '0.1'
+        SchemaVersion = '0.2'
         Configuration = $Metrics.Configuration; Thresholds = [pscustomobject] $thresholds; System = $Metrics.System
         StartedUtc = $Metrics.StartedUtc; CompletedUtc = $Metrics.CompletedUtc
         ActualDurationSeconds = $Metrics.ActualDurationSeconds; Samples = $samples
+        SamplingQuality = $sampling.Quality; CollectionTiming = $sampling.Timing
+        MemoryAssessment = $memory.Assessment; Advisories = $advisories
         CriticalSystemEvents = @($Metrics.CriticalSystemEvents | Where-Object { $null -ne $_ })
         CollectionErrors = @($Metrics.CollectionErrors | Where-Object { $null -ne $_ })
         Statistics = [pscustomobject]@{
-            Cpu = $cpu; Memory = $memory; Disks = $disks; Drives = $drives; Processes = $process
+            Cpu = $cpu; Memory = $memory.Statistics; Disks = $disks; Drives = $drives; Processes = $process
         }
-        Assessment = [pscustomobject]@{ Category = $category; Summary = $summary; CoverageGaps = $gaps.ToArray() }
+        Assessment = [pscustomobject]@{
+            Category = $category; Summary = $summary; CoverageGaps = $gaps.ToArray(); AdvisoryCount = $advisories.Count
+        }
         Findings = $findings.ToArray()
     }
 }

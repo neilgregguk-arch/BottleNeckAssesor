@@ -13,9 +13,9 @@ function Add-WpbdCollectionError {
 }
 
 function Get-WpbdCim {
-    param([string] $Class, $Errors, [string] $Filter)
+    param([string] $Class, $Errors, [string] $Filter, [int] $TimeoutSeconds = 3)
     try {
-        $options = @{ ClassName = $Class; OperationTimeoutSec = 3; ErrorAction = 'Stop' }
+        $options = @{ ClassName = $Class; OperationTimeoutSec = $TimeoutSeconds; ErrorAction = 'Stop' }
         if ($Filter) { $options.Filter = $Filter }
         $rows = @(Get-CimInstance @options)
         if ($rows.Count -eq 0) {
@@ -23,7 +23,10 @@ function Get-WpbdCim {
         }
         $rows
     } catch {
-        Add-WpbdCollectionError $Errors $Class 'QueryFailed' $_.Exception.Message
+        $exception = $_.Exception
+        $code = if ($exception -is [TimeoutException] -or $exception.NativeErrorCode -match 'timeout' -or
+            $exception.Message -match '\btimed out\b|\btimeout\b') { 'Timeout' } else { 'QueryFailed' }
+        Add-WpbdCollectionError $Errors $Class $code $exception.Message
     }
 }
 
@@ -57,7 +60,7 @@ function Convert-WpbdCpu {
     param($Before, $After)
     $interval = Get-WpbdDelta $Before.Timestamp_Sys100NS $After.Timestamp_Sys100NS
     $idle = Get-WpbdRatio (Get-WpbdDelta $Before.PercentProcessorTime $After.PercentProcessorTime) $interval
-    if ($null -ne $idle) { return (100 * (1 - [Math]::Min(1.0, $idle))) }
+    if ($null -ne $idle -and $idle -le 1) { return (100 * (1 - $idle)) }
     return $null
 }
 
@@ -66,17 +69,23 @@ function Convert-WpbdMemory {
     $seconds = Get-WpbdCounterSeconds $Before $After
     $available = $After.AvailableBytes
     $usedPercent = $null
+    $availablePercent = $null
     if ($null -ne $available -and $VisibleBytes -gt 0 -and $available -le $VisibleBytes) {
-        $usedPercent = 100 * (1 - [double] $available / $VisibleBytes)
+        $availablePercent = Get-WpbdRatio $available $VisibleBytes 100
+        $usedPercent = 100 - $availablePercent
     }
     [pscustomobject]@{
         AvailableBytes = $available
+        AvailablePercent = $availablePercent
         UsedPercent = $usedPercent
         CommittedBytes = $After.CommittedBytes
         CommitLimitBytes = $After.CommitLimit
         CommitPercent = Get-WpbdRatio $After.CommittedBytes $After.CommitLimit 100
         PageReadsPerSecond = Get-WpbdRatio (Get-WpbdDelta $Before.PageReadsPersec $After.PageReadsPersec) $seconds
         PagesInputPerSecond = Get-WpbdRatio (Get-WpbdDelta $Before.PagesInputPersec $After.PagesInputPersec) $seconds
+        FreeAndZeroPageListBytes = $After.FreeAndZeroPageListBytes
+        ModifiedPageListBytes = $After.ModifiedPageListBytes
+        PagesOutputPerSecond = Get-WpbdRatio (Get-WpbdDelta $Before.PagesOutputPersec $After.PagesOutputPersec) $seconds
     }
 }
 
@@ -114,6 +123,7 @@ function Convert-WpbdDisk {
 
 function Get-WpbdProcessSnapshot {
     param($Clock, $Errors)
+    $ErrorActionPreference = 'Stop'
     try {
         $processes = @(Get-Process -ErrorAction Stop)
     } catch {
@@ -122,7 +132,10 @@ function Get-WpbdProcessSnapshot {
     }
     foreach ($process in $processes) {
         try {
-            if ($process.Id -eq 0) { continue }
+            $id = $process.Id
+            if ($id -le 0) { continue }
+            $name = $process.ProcessName
+            if (-not $name) { throw 'Process name was unavailable.' }
             $started = $null
             $cpu = $null
             $private = $null
@@ -136,10 +149,12 @@ function Get-WpbdProcessSnapshot {
             try { $private = $process.PrivateMemorySize64 } catch {}
             try { $workingSet = $process.WorkingSet64 } catch {}
             [pscustomobject]@{
-                Id = $process.Id; Name = $process.ProcessName; StartUtc = $started
+                Id = $id; Name = $name; StartUtc = $started
                 ElapsedSeconds = $elapsed; TotalCpuSeconds = $cpu
                 PrivateBytes = $private; WorkingSetBytes = $workingSet
             }
+        } catch {
+            Add-WpbdCollectionError $Errors 'Processes' 'InstanceUnavailable' 'An exiting or inaccessible process could not be sampled.'
         } finally {
             $process.Dispose()
         }
@@ -150,7 +165,7 @@ function Convert-WpbdProcess {
     param($Before, $After, $LogicalProcessorCount)
     $cpu = $null
     $elapsed = $null
-    if ($After.StartUtc -and $After.StartUtc -eq $Before.StartUtc) {
+    if ($After.StartUtc -and $After.Id -eq $Before.Id -and $After.StartUtc -eq $Before.StartUtc) {
         $elapsed = $After.ElapsedSeconds - $Before.ElapsedSeconds
         if ($elapsed -gt 0 -and $null -ne $After.TotalCpuSeconds -and
                 $null -ne $Before.TotalCpuSeconds -and $After.TotalCpuSeconds -ge $Before.TotalCpuSeconds) {
@@ -250,20 +265,105 @@ function Get-WpbdProcessPaths {
     $paths
 }
 
-function Get-WpbdSnapshot {
-    param($Clock, $Errors, [string] $ProcessorClass)
+function Get-WpbdProcessorRows {
+    param([string] $Class, $Errors)
     $cpu = @{}
-    foreach ($row in (Get-WpbdCim $ProcessorClass $Errors)) {
+    foreach ($row in (Get-WpbdCim $Class $Errors -TimeoutSeconds 2)) {
         if ($row.Name) { $cpu[$row.Name] = $row }
     }
-    $memory = Get-WpbdCim 'Win32_PerfRawData_PerfOS_Memory' $Errors | Select-Object -First 1
+    $total = $cpu['_Total']
+    if ($cpu.Count -gt 0 -and (-not ($total.Timestamp_Sys100NS -gt 0) -or
+            $null -eq $total.PercentProcessorTime -or $total.PercentProcessorTime -lt 0)) {
+        Add-WpbdCollectionError $Errors $Class 'InvalidTotalCounter' 'The provider returned no usable total CPU counter.'
+        $cpu.Remove('_Total')
+    }
+    $cpu
+}
+
+function Get-WpbdProcessorSnapshot {
+    param($State, $Errors, [switch] $Baseline)
+    $class = $State.NextClass
+    $alternate = if ($class -eq $State.PreferredClass) { $State.FallbackClass } else { $State.PreferredClass }
+    $rows = Get-WpbdProcessorRows $class $Errors
+    if ($Baseline -and -not $rows.ContainsKey('_Total')) {
+        $class = $alternate
+        $alternate = $State.PreferredClass
+        $rows = Get-WpbdProcessorRows $class $Errors
+    }
+    if ($rows.ContainsKey('_Total')) {
+        $State.SelectedClass = $class
+        $State.NextClass = $class
+        $State.ConsecutiveFailures = 0
+    } elseif ($class -ne $State.SelectedClass) {
+        # An unsuccessful fallback probe gets one slot. Return to the cached source.
+        $State.NextClass = $alternate
+        $State.ConsecutiveFailures = 0
+    } else {
+        $State.ConsecutiveFailures++
+        if ($State.ConsecutiveFailures -ge 2) { $State.NextClass = $alternate }
+    }
+    [pscustomobject]@{ Class = $class; Rows = $rows }
+}
+
+function Get-WpbdCpuMeasurement {
+    param($Before, $After)
+    $percent = $null
+    $interval = $null
+    $status = 'Measured'
+    if (-not $After.Cpu['_Total']) { $status = 'ProviderUnavailable' }
+    elseif ($Before.ProcessorCounterClass -ne $After.ProcessorCounterClass) { $status = 'ProviderChanged' }
+    elseif (-not $Before.Cpu['_Total']) { $status = 'BaselineUnavailable' }
+    else {
+        $previous = $Before.Cpu['_Total']
+        $current = $After.Cpu['_Total']
+        $ticks = Get-WpbdDelta $previous.Timestamp_Sys100NS $current.Timestamp_Sys100NS
+        if ($ticks -gt 0) { $interval = $ticks / 10000000 }
+        $percent = Convert-WpbdCpu $previous $current
+        if ($null -eq $percent) { $status = 'InvalidCounterDelta' }
+    }
+    [pscustomobject]@{ Percent = $percent; Status = $status; IntervalSeconds = $interval }
+}
+
+function Get-WpbdSnapshot {
+    param($Clock, $Errors, $ProcessorState, [switch] $Baseline)
+    $started = $Clock.Elapsed.TotalSeconds
+    $processor = Get-WpbdProcessorSnapshot $ProcessorState $Errors -Baseline:$Baseline
+    $cpuEnd = $Clock.Elapsed.TotalSeconds
+    $memory = Get-WpbdCim 'Win32_PerfRawData_PerfOS_Memory' $Errors -TimeoutSeconds 2 | Select-Object -First 1
+    $memoryEnd = $Clock.Elapsed.TotalSeconds
     $disks = @{}
-    foreach ($row in (Get-WpbdCim 'Win32_PerfRawData_PerfDisk_PhysicalDisk' $Errors)) {
+    foreach ($row in (Get-WpbdCim 'Win32_PerfRawData_PerfDisk_PhysicalDisk' $Errors -TimeoutSeconds 2)) {
         if ($row.Name -and $row.Name -ne '_Total') { $disks[$row.Name] = $row }
     }
+    $diskEnd = $Clock.Elapsed.TotalSeconds
     $processes = @{}
     foreach ($row in (Get-WpbdProcessSnapshot $Clock $Errors)) { $processes[$row.Id] = $row }
-    [pscustomobject]@{ Cpu = $cpu; Memory = $memory; Disks = $disks; Processes = $processes }
+    $finished = $Clock.Elapsed.TotalSeconds
+    [pscustomobject]@{
+        Cpu = $processor.Rows; ProcessorCounterClass = $processor.Class
+        Memory = $memory; Disks = $disks; Processes = $processes
+        CaptureSeconds = $finished - $started
+        ProviderSeconds = [pscustomobject]@{
+            Cpu = $cpuEnd - $started; Memory = $memoryEnd - $cpuEnd
+            Disk = $diskEnd - $memoryEnd; Processes = $finished - $diskEnd
+        }
+    }
+}
+
+function Get-WpbdSamplingSlot {
+    param($NextSlot, $SampleCount, $Elapsed, $Interval, $Duration, $PreviousWorkEnd)
+    $due = [int] [Math]::Floor($Elapsed / $Interval)
+    if ($Elapsed -ge $Duration) { $due = $SampleCount }
+    $slot = [Math]::Max($NextSlot, $due)
+    $missed = $null
+    if ($slot -gt $NextSlot) {
+        $reason = if ($PreviousWorkEnd -ge $NextSlot * $Interval) { 'PreviousCaptureOverran' } else { 'SchedulerDelay' }
+        $missed = [pscustomobject]@{
+            FirstSlot = $NextSlot; LastSlot = $slot - 1; Count = $slot - $NextSlot; Reason = $reason
+            ObservedElapsedSeconds = $Elapsed; PreviousWorkEndSeconds = $PreviousWorkEnd
+        }
+    }
+    [pscustomobject]@{ Slot = $slot; Missed = $missed }
 }
 
 function Get-WpbdMetrics {
@@ -280,47 +380,66 @@ function Get-WpbdMetrics {
     }
 
     $errors = [ordered]@{}
+    $clock = [Diagnostics.Stopwatch]::StartNew()
     $system = Get-WpbdSystem $errors
-    $processorClass = 'Win32_PerfRawData_Counters_ProcessorInformation'
-    if (-not (Get-WpbdCim $processorClass $errors | Select-Object -First 1)) {
-        $processorClass = 'Win32_PerfRawData_PerfOS_Processor'
+    $inventorySeconds = $clock.Elapsed.TotalSeconds
+    $processorState = @{
+        PreferredClass = 'Win32_PerfRawData_Counters_ProcessorInformation'
+        FallbackClass = 'Win32_PerfRawData_PerfOS_Processor'
+        NextClass = 'Win32_PerfRawData_Counters_ProcessorInformation'
+        SelectedClass = $null; ConsecutiveFailures = 0
     }
     $samples = New-Object 'System.Collections.Generic.List[object]'
-    $started = [DateTimeOffset]::UtcNow
-    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $missedSlots = New-Object 'System.Collections.Generic.List[object]'
     $sampleCount = [int] [Math]::Ceiling($DurationSeconds / $SampleIntervalSeconds)
     $activity = 'Windows performance diagnostic'
     try {
         Write-Progress -Activity $activity -Status 'Collecting baseline' -PercentComplete 0
-        $before = Get-WpbdSnapshot $clock $errors $processorClass
+        $before = Get-WpbdSnapshot $clock $errors $processorState -Baseline
+        $baselineTiming = [pscustomobject]@{
+            CaptureSeconds = $before.CaptureSeconds; ProviderSeconds = $before.ProviderSeconds
+            ProcessorCounterClass = $before.ProcessorCounterClass
+        }
+        $origin = $clock.Elapsed.TotalSeconds
+        $started = [DateTimeOffset]::UtcNow
+        $previousWorkEnd = 0.0
         for ($slot = 1; $slot -le $sampleCount; $slot++) {
             $target = [Math]::Min($slot * $SampleIntervalSeconds, $DurationSeconds)
-            $remaining = $target - $clock.Elapsed.TotalSeconds
+            $remaining = $target - ($clock.Elapsed.TotalSeconds - $origin)
             if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int] [Math]::Ceiling($remaining * 1000)) }
-            $elapsed = $clock.Elapsed.TotalSeconds
-            $dueSlot = [Math]::Min($sampleCount, [int] [Math]::Floor($elapsed / $SampleIntervalSeconds))
-            if ($elapsed -ge $DurationSeconds) { $dueSlot = $sampleCount }
-            if ($dueSlot -gt $slot) {
-                Add-WpbdCollectionError $errors 'Sampling' 'MissedSlots' 'Collection overran one or more scheduled sample slots.'
-                $slot = $dueSlot
+            $decision = Get-WpbdSamplingSlot $slot $sampleCount ($clock.Elapsed.TotalSeconds - $origin) `
+                $SampleIntervalSeconds $DurationSeconds $previousWorkEnd
+            if ($null -ne $decision.Missed) {
+                $missedSlots.Add($decision.Missed)
+                Add-WpbdCollectionError $errors 'Sampling' 'MissedSlots' 'The sampling schedule skipped slots. See SamplingQuality.MissedSlots for reasons and counts.'
+                $slot = $decision.Slot
+                $target = [Math]::Min($slot * $SampleIntervalSeconds, $DurationSeconds)
             }
-            $timestamp = [DateTimeOffset]::UtcNow.ToString('o')
             Write-Progress -Activity $activity -Status "Sampling ($slot of $sampleCount)" `
-                -PercentComplete ([int] [Math]::Min(100, 100 * $elapsed / $DurationSeconds))
-            $after = Get-WpbdSnapshot $clock $errors $processorClass
-            $total = Convert-WpbdCpu $before.Cpu['_Total'] $after.Cpu['_Total']
-            if ($null -eq $total) {
+                -PercentComplete ([int] [Math]::Min(100, 100 * $target / $DurationSeconds))
+            $timestamp = [DateTimeOffset]::UtcNow.ToString('o')
+            $elapsed = $clock.Elapsed.TotalSeconds - $origin
+            $after = Get-WpbdSnapshot $clock $errors $processorState
+            $processingStart = $clock.Elapsed.TotalSeconds
+            $previousCpu = if ($before.ProcessorCounterClass -eq $after.ProcessorCounterClass) { $before.Cpu } else { @{} }
+            $cpuMeasurement = Get-WpbdCpuMeasurement $before $after
+            if ($null -eq $cpuMeasurement.Percent) {
                 Add-WpbdCollectionError $errors 'CPU utilisation' 'Unavailable' 'No valid total CPU counter pair for this sample.'
             }
             if ($after.Disks.Count -eq 0) {
                 Add-WpbdCollectionError $errors 'Physical disks' 'Unavailable' 'No individual physical disk counters were available.'
             }
-            $samples.Add([pscustomobject]@{
+            $sample = [pscustomobject]@{
                 Slot = $slot; TimestampUtc = $timestamp; ElapsedSeconds = $elapsed
-                CpuTotalPercent = $total
+                ScheduledElapsedSeconds = $target
+                ProcessorCounterClass = $after.ProcessorCounterClass
+                CollectionTiming = $null
+                CpuTotalPercent = $cpuMeasurement.Percent
+                CpuStatus = $cpuMeasurement.Status
+                CpuIntervalSeconds = $cpuMeasurement.IntervalSeconds
                 LogicalProcessors = @(foreach ($name in ($after.Cpu.Keys | Sort-Object)) {
                     if ($name -notmatch '_Total$') {
-                        [pscustomobject]@{ Name = $name; Percent = Convert-WpbdCpu $before.Cpu[$name] $after.Cpu[$name] }
+                        [pscustomobject]@{ Name = $name; Percent = Convert-WpbdCpu $previousCpu[$name] $after.Cpu[$name] }
                     }
                 })
                 Memory = Convert-WpbdMemory $before.Memory $after.Memory $system.VisibleMemoryBytes
@@ -330,7 +449,16 @@ function Get-WpbdMetrics {
                 Processes = @(foreach ($row in $after.Processes.Values) {
                     Convert-WpbdProcess $before.Processes[$row.Id] $row $system.LogicalProcessorCount
                 })
-            })
+            }
+            $previousWorkEnd = $clock.Elapsed.TotalSeconds - $origin
+            $sample.CollectionTiming = [pscustomobject]@{
+                CaptureSeconds = $after.CaptureSeconds
+                ProcessingSeconds = $clock.Elapsed.TotalSeconds - $processingStart
+                TotalSeconds = $previousWorkEnd - $elapsed
+                StartDelaySeconds = [Math]::Max(0.0, $elapsed - $target)
+                ProviderSeconds = $after.ProviderSeconds
+            }
+            $samples.Add($sample)
             $before = $after
         }
     } finally {
@@ -338,20 +466,27 @@ function Get-WpbdMetrics {
         Write-Progress -Activity $activity -Completed
     }
     $completed = [DateTimeOffset]::UtcNow
+    $postSampling = [Diagnostics.Stopwatch]::StartNew()
     Write-Verbose 'Reading drive capacity and recent critical events after performance sampling.'
     $paths = Get-WpbdProcessPaths $before.Processes $errors
     $drives = @(Get-WpbdDrives $errors)
     $events = @(Get-WpbdCriticalEvents $errors)
+    $postSampling.Stop()
 
     [pscustomobject]@{
-        SchemaVersion = '0.1'
+        SchemaVersion = '0.2'
         Configuration = [pscustomobject]@{
             DurationSeconds = $DurationSeconds; SampleIntervalSeconds = $SampleIntervalSeconds
-            ExpectedSamples = $sampleCount; ProcessorCounterClass = $processorClass
+            ExpectedSamples = $sampleCount; ProcessorCounterClass = $processorState.SelectedClass
         }
         System = $system
         StartedUtc = $started.ToString('o'); CompletedUtc = $completed.ToString('o')
-        ActualDurationSeconds = $clock.Elapsed.TotalSeconds
+        ActualDurationSeconds = $clock.Elapsed.TotalSeconds - $origin
+        MissedSlots = $missedSlots.ToArray()
+        CollectionTiming = [pscustomobject]@{
+            InventorySeconds = $inventorySeconds; Baseline = $baselineTiming
+            PostSamplingSeconds = $postSampling.Elapsed.TotalSeconds
+        }
         Samples = $samples.ToArray(); Drives = $drives; CriticalSystemEvents = $events; ProcessPaths = $paths
         CollectionErrors = @($errors.Values)
     }

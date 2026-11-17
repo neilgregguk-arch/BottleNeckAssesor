@@ -17,7 +17,7 @@ Describe 'WPBD diagnostic engine' {
                     LogicalProcessors = @()
                     Memory = [pscustomobject]@{
                         AvailableBytes = $(if ($HighMemory -or $Paging) { 256MB } else { (2GB + $slot * 1MB) })
-                        UsedPercent = $(if ($HighMemory -or $Paging) { 97 } else { 75 })
+                        UsedPercent = $(if ($HighMemory -or $Paging) { 96.875 } else { 100 * (1 - (2GB + $slot * 1MB) / 8GB) })
                         CommitPercent = $(if ($Paging) { 94 } else { 60 })
                         CommittedBytes = 8GB; CommitLimitBytes = 16GB
                         PageReadsPerSecond = $(if ($Paging) { 40 } else { 0 })
@@ -42,7 +42,9 @@ Describe 'WPBD diagnostic engine' {
             })
             [pscustomobject]@{
                 Configuration = [pscustomobject]@{ DurationSeconds = 10; SampleIntervalSeconds = 2; ExpectedSamples = 5 }
-                System = [pscustomobject]@{ ComputerName = 'TEST<PC>'; LogicalProcessorCount = 4; InstalledMemoryBytes = 8GB }
+                System = [pscustomobject]@{
+                    ComputerName = 'TEST<PC>'; LogicalProcessorCount = 4; InstalledMemoryBytes = 8GB; VisibleMemoryBytes = 8GB
+                }
                 StartedUtc = '2025-01-02T10:10:00.0000000+00:00'
                 CompletedUtc = '2025-01-02T10:10:10.0000000+00:00'; ActualDurationSeconds = 10
                 Samples = $samples; CriticalSystemEvents = @(); CollectionErrors = @()
@@ -51,6 +53,17 @@ Describe 'WPBD diagnostic engine' {
                     FreeBytes = $(if ($LowSpace) { 1GB } else { 60GB })
                     FreePercent = $(if ($LowSpace) { 1 } else { 60 })
                 })
+            }
+        }
+
+        function Set-TestMemory {
+            param($Metrics, $VisibleBytes, $AvailableBytes, $PageReads = 0, $Commit = 60)
+            $Metrics.System.VisibleMemoryBytes = $VisibleBytes
+            foreach ($sample in $Metrics.Samples) {
+                $sample.Memory.AvailableBytes = $AvailableBytes
+                $sample.Memory.UsedPercent = 100 * (1 - $AvailableBytes / $VisibleBytes)
+                $sample.Memory.PageReadsPerSecond = $PageReads
+                $sample.Memory.CommitPercent = $Commit
             }
         }
     }
@@ -88,19 +101,24 @@ Describe 'WPBD diagnostic engine' {
                 $process.CpuSeconds | Should Be 2
             }
             It 'discards CPU deltas across process identity changes' {
-                $a = [pscustomobject]@{ StartUtc = 'old'; ElapsedSeconds = 1; TotalCpuSeconds = 1 }
-                $b = [pscustomobject]@{ StartUtc = 'new'; ElapsedSeconds = 2; TotalCpuSeconds = 3 }
+                $a = [pscustomobject]@{ Id = 42; StartUtc = 'old'; ElapsedSeconds = 1; TotalCpuSeconds = 1 }
+                $b = [pscustomobject]@{ Id = 42; StartUtc = 'new'; ElapsedSeconds = 2; TotalCpuSeconds = 3 }
                 (Convert-WpbdProcess $a $b 4).CpuPercent | Should BeNullOrEmpty
             }
             It 'calculates physical use, commit usage and paging rates from their own denominators' {
                 $a = [pscustomobject]@{ Frequency_PerfTime = 1000; Timestamp_PerfTime = 1000; PageReadsPersec = 10; PagesInputPersec = 20 }
                 $b = [pscustomobject]@{ Frequency_PerfTime = 1000; Timestamp_PerfTime = 3000
-                    AvailableBytes = 1GB; CommittedBytes = 9GB; CommitLimit = 12GB; PageReadsPersec = 18; PagesInputPersec = 60 }
+                    AvailableBytes = 1GB; CommittedBytes = 9GB; CommitLimit = 12GB; PageReadsPersec = 18; PagesInputPersec = 60
+                    FreeAndZeroPageListBytes = 256MB; ModifiedPageListBytes = 300MB; PagesOutputPersec = 8 }
                 $memory = Convert-WpbdMemory $a $b 4GB
                 $memory.UsedPercent | Should Be 75
+                $memory.AvailablePercent | Should Be 25
                 $memory.CommitPercent | Should Be 75
                 $memory.PageReadsPerSecond | Should Be 4
                 $memory.PagesInputPerSecond | Should Be 20
+                $memory.FreeAndZeroPageListBytes | Should Be 256MB
+                $memory.ModifiedPageListBytes | Should Be 300MB
+                $memory.PagesOutputPerSecond | Should BeNullOrEmpty
             }
             It 'converts fractional disk active time, IOPS, throughput and operation latency' {
                 $a = [pscustomobject]@{
@@ -132,17 +150,113 @@ Describe 'WPBD diagnostic engine' {
             It 'records a query failure and continues to collect independent metrics' {
                 Mock Get-CimInstance {
                     if ($ClassName -like '*PhysicalDisk') { throw 'Synthetic provider failure' }
-                    [pscustomobject]@{ Name = '_Total'; AvailableBytes = 123 }
+                    [pscustomobject]@{ Name = '_Total'; AvailableBytes = 123; Timestamp_Sys100NS = 100; PercentProcessorTime = 25 }
                 }
-                Mock Get-WpbdProcessSnapshot {}
+                Mock Get-Process {}
                 $errors = [ordered]@{}
-                $first = Get-WpbdSnapshot ([Diagnostics.Stopwatch]::StartNew()) $errors 'SyntheticProcessor'
-                Get-WpbdSnapshot ([Diagnostics.Stopwatch]::StartNew()) $errors 'SyntheticProcessor' | Out-Null
+                $state = @{ PreferredClass = 'Fast'; FallbackClass = 'Backup'; NextClass = 'Fast'; SelectedClass = $null; ConsecutiveFailures = 0 }
+                $first = Get-WpbdSnapshot ([Diagnostics.Stopwatch]::StartNew()) $errors $state -Baseline
+                Get-WpbdSnapshot ([Diagnostics.Stopwatch]::StartNew()) $errors $state | Out-Null
                 $first.Memory.AvailableBytes | Should Be 123
                 $first.Cpu.Count | Should Be 1
                 $first.Disks.Count | Should Be 0
                 @($errors.Values)[0].Code | Should Be 'QueryFailed'
                 @($errors.Values)[0].Count | Should Be 2
+            }
+            It 'chooses the processor provider with one successful baseline query' {
+                Mock Get-CimInstance { [pscustomobject]@{ Name = '_Total'; Timestamp_Sys100NS = 100; PercentProcessorTime = 25 } }
+                $state = @{ PreferredClass = 'Fast'; FallbackClass = 'Backup'; NextClass = 'Fast'; SelectedClass = $null; ConsecutiveFailures = 0 }
+                (Get-WpbdProcessorSnapshot $state ([ordered]@{}) -Baseline).Class | Should Be 'Fast'
+                $state.SelectedClass | Should Be 'Fast'
+                Assert-MockCalled Get-CimInstance -Exactly -Times 1 -Scope It
+            }
+            It 'caches the fallback selected when the initial processor query times out' {
+                Mock Get-CimInstance {
+                    if ($ClassName -eq 'Fast') { throw [TimeoutException]::new('Synthetic processor timeout') }
+                    [pscustomobject]@{ Name = '_Total'; Timestamp_Sys100NS = 100; PercentProcessorTime = 25 }
+                }
+                $state = @{ PreferredClass = 'Fast'; FallbackClass = 'Backup'; NextClass = 'Fast'; SelectedClass = $null; ConsecutiveFailures = 0 }
+                $errors = [ordered]@{}
+                (Get-WpbdProcessorSnapshot $state $errors -Baseline).Class | Should Be 'Backup'
+                (Get-WpbdProcessorSnapshot $state $errors).Class | Should Be 'Backup'
+                $state.SelectedClass | Should Be 'Backup'
+                $errors['Fast/Timeout'].Count | Should Be 1
+                Assert-MockCalled Get-CimInstance -Exactly -Times 1 -Scope It -ParameterFilter { $ClassName -eq 'Fast' }
+                Assert-MockCalled Get-CimInstance -Exactly -Times 2 -Scope It -ParameterFilter { $ClassName -eq 'Backup' }
+            }
+            It 'retries a temporarily unavailable processor provider and only measures valid pairs' {
+                $script:wpbdAttempt = 0
+                Mock Get-CimInstance {
+                    $script:wpbdAttempt++
+                    if ($script:wpbdAttempt -eq 2) { throw 'Transient error' }
+                    [pscustomobject]@{ Name = '_Total'; Timestamp_Sys100NS = $script:wpbdAttempt * 100; PercentProcessorTime = $script:wpbdAttempt * 25 }
+                }
+                $state = @{ PreferredClass = 'Fast'; FallbackClass = 'Backup'; NextClass = 'Fast'; SelectedClass = $null; ConsecutiveFailures = 0 }
+                $errors = [ordered]@{}
+                $snapshots = foreach ($attempt in 1..4) {
+                    $reading = Get-WpbdProcessorSnapshot $state $errors -Baseline:($attempt -eq 1)
+                    [pscustomobject]@{ ProcessorCounterClass = $reading.Class; Cpu = $reading.Rows }
+                }
+                (Get-WpbdCpuMeasurement $snapshots[0] $snapshots[1]).Status | Should Be 'ProviderUnavailable'
+                (Get-WpbdCpuMeasurement $snapshots[1] $snapshots[2]).Status | Should Be 'BaselineUnavailable'
+                (Get-WpbdCpuMeasurement $snapshots[2] $snapshots[3]).Percent | Should Be 75
+                $state.SelectedClass | Should Be 'Fast'
+                Assert-MockCalled Get-CimInstance -Exactly -Times 0 -Scope It -ParameterFilter { $ClassName -eq 'Backup' }
+            }
+            It 'switches after repeated failures without calculating cross-provider CPU deltas' {
+                Mock Get-CimInstance {
+                    if ($ClassName -eq 'Fast') { throw 'Synthetic failure' }
+                    [pscustomobject]@{ Name = '_Total'; Timestamp_Sys100NS = 500; PercentProcessorTime = 70 }
+                }
+                $state = @{ PreferredClass = 'Fast'; FallbackClass = 'Backup'; NextClass = 'Fast'; SelectedClass = 'Fast'; ConsecutiveFailures = 0 }
+                $errors = [ordered]@{}
+                (Get-WpbdProcessorSnapshot $state $errors).Class | Should Be 'Fast'
+                $previous = Get-WpbdProcessorSnapshot $state $errors
+                $fallback = Get-WpbdProcessorSnapshot $state $errors
+                $state.SelectedClass | Should Be 'Backup'
+                $a = [pscustomobject]@{ ProcessorCounterClass = $previous.Class; Cpu = @{ _Total = @{ Timestamp_Sys100NS = 400; PercentProcessorTime = 30 } } }
+                $b = [pscustomobject]@{ ProcessorCounterClass = $fallback.Class; Cpu = $fallback.Rows }
+                $result = Get-WpbdCpuMeasurement $a $b
+                $result.Percent | Should BeNullOrEmpty
+                $result.Status | Should Be 'ProviderChanged'
+            }
+            It 'keeps invalid idle deltas missing and accepts a measured zero' {
+                $a = @{ Timestamp_Sys100NS = 100; PercentProcessorTime = 500 }
+                $b = @{ Timestamp_Sys100NS = 200; PercentProcessorTime = 610 }
+                (Convert-WpbdCpu $a $b) | Should BeNullOrEmpty
+                $b.PercentProcessorTime = 600
+                (Convert-WpbdCpu $a $b) | Should Be 0
+                $b.Timestamp_Sys100NS = 100
+                (Convert-WpbdCpu $a $b) | Should BeNullOrEmpty
+            }
+            It 'records collection overrun, delayed scheduling and the final partial slot' {
+                $decision = Get-WpbdSamplingSlot 2 5 6.1 2 9 6
+                $decision.Slot | Should Be 3
+                $decision.Missed.FirstSlot | Should Be 2
+                $decision.Missed.Count | Should Be 1
+                $decision.Missed.Reason | Should Be 'PreviousCaptureOverran'
+                (Get-WpbdSamplingSlot 2 5 6.1 2 9 3.9).Missed.Reason | Should Be 'SchedulerDelay'
+                (Get-WpbdSamplingSlot 5 5 9.1 2 9 8.3).Slot | Should Be 5
+            }
+            It 'continues after a process exits while its identity is being read' {
+                Mock Get-Process {
+                    $exited = [pscustomobject]@{ Id = 40 }
+                    $exited | Add-Member ScriptProperty ProcessName { throw 'Process exited' }
+                    $exited | Add-Member ScriptMethod Dispose {}
+                    $active = [pscustomobject]@{
+                        Id = 41; ProcessName = 'active'; StartTime = [datetime] '2025-01-02'
+                        TotalProcessorTime = [timespan]::FromSeconds(2); PrivateMemorySize64 = 123; WorkingSet64 = 456
+                    }
+                    $active | Add-Member ScriptMethod Dispose {}
+                    $exited
+                    $active
+                }
+                $errors = [ordered]@{}
+                $observed = @(Get-WpbdProcessSnapshot ([Diagnostics.Stopwatch]::StartNew()) $errors)
+                $observed.Count | Should Be 1
+                $observed[0].Id | Should Be 41
+                $observed[0].PrivateBytes | Should Be 123
+                $errors['Processes/InstanceUnavailable'].Count | Should Be 1
             }
         }
     }
@@ -151,6 +265,8 @@ Describe 'WPBD diagnostic engine' {
         It 'summarises normal CPU, memory, disk and process statistics' {
             $report = Get-WpbdAnalysis (New-TestMetrics)
             $report.Assessment.Category | Should Be 'No clear bottleneck detected'
+            $report.MemoryAssessment.Category | Should Be 'Normal memory operation'
+            $report.Advisories.Count | Should Be 0
             $report.Statistics.Cpu.Average | Should Be 30
             $report.Statistics.Cpu.Maximum | Should Be 50
             $report.Statistics.Memory.AvailableBytes.Average | Should Be (2GB + 3MB)
@@ -185,12 +301,149 @@ Describe 'WPBD diagnostic engine' {
                 Should Be 'No clear bottleneck detected'
         }
         It 'requires corroboration for high physical memory usage' {
-            (Get-WpbdAnalysis (New-TestMetrics -HighMemory)).Assessment.Category | Should Be 'No clear bottleneck detected'
+            $result = Get-WpbdAnalysis (New-TestMetrics -HighMemory)
+            $result.Assessment.Category | Should Be 'No clear bottleneck detected'
+            $result.MemoryAssessment.Category | Should Be 'Elevated memory utilisation'
+            $result.Advisories[0].Category | Should Be 'Elevated memory utilisation'
+            @($result.Findings | Where-Object Category -eq 'Memory pressure').Count | Should Be 0
+        }
+        It 'advises on elevated utilisation with substantial available RAM' {
+            $metrics = New-TestMetrics
+            Set-TestMemory $metrics 64GB 8GB
+            (Get-WpbdAnalysis $metrics).MemoryAssessment.Category | Should Be 'Elevated memory utilisation'
+        }
+        It 'advises on reduced headroom and paging at the reported workstation scale' {
+            $metrics = New-TestMetrics
+            Set-TestMemory $metrics 15.5GB 1538MB 86
+            $report = Get-WpbdAnalysis $metrics
+            $report.Assessment.Category | Should Be 'No clear bottleneck detected'
+            $report.Advisories[0].Category | Should Be 'Elevated memory utilisation'
+            $report.Advisories[0].Observed | Should Match ('{0:N2} GiB' -f (1538MB / 1GB))
+        }
+        It 'does not infer pressure from hard paging with adequate physical memory' {
+            $metrics = New-TestMetrics
+            Set-TestMemory $metrics 16GB 6GB 120
+            $report = Get-WpbdAnalysis $metrics
+            $report.MemoryAssessment.Category | Should Be 'Normal memory operation'
+            $report.Statistics.Memory.PageReadsPerSecond.Average | Should Be 120
+        }
+        It 'requires headroom and corroboration to occur together' {
+            $metrics = New-TestMetrics
+            Set-TestMemory $metrics 16GB 1GB
+            foreach ($sample in $metrics.Samples[3..4]) {
+                $sample.Memory.AvailableBytes = 6GB
+                $sample.Memory.PageReadsPerSecond = 120
+                $sample.Memory.CommitPercent = 95
+            }
+            $report = Get-WpbdAnalysis $metrics
+            $report.Statistics.Memory.PressureSamples | Should Be 0
+            $report.MemoryAssessment.Category | Should Be 'Elevated memory utilisation'
+        }
+        It 'recognises potential memory pressure when reduced headroom and paging persist' {
+            $metrics = New-TestMetrics
+            Set-TestMemory $metrics 16GB 1GB 25
+            $report = Get-WpbdAnalysis $metrics
+            $report.Assessment.Category | Should Be 'Memory pressure'
+            $report.MemoryAssessment.Category | Should Be 'Potential memory pressure'
+            $report.Findings[0].Severity | Should Be 'Warning'
+            $report.Findings[0].Confidence | Should Be 'Medium'
+            $report.Findings[0].Measurements.PressureWithPagingSamples | Should Be 5
+            $report.Advisories.Count | Should Be 0
         }
         It 'identifies severe memory pressure with paging' {
             $report = Get-WpbdAnalysis (New-TestMetrics -Paging)
             $report.Assessment.Category | Should Be 'Memory pressure'
             $report.Findings[0].Severity | Should Be 'Critical'
+            $report.Findings[0].Classification | Should Be 'Severe memory pressure'
+            $report.MemoryAssessment.Confidence | Should Be 'High'
+        }
+        It 'uses both absolute and bounded relative headroom rules across RAM capacities' {
+            $metrics = New-TestMetrics
+            $metrics.System.InstalledMemoryBytes = 64GB
+            Set-TestMemory $metrics 8GB 700MB 10
+            (Get-WpbdAnalysis $metrics).MemoryAssessment.Category | Should Be 'Potential memory pressure'
+            Set-TestMemory $metrics 16GB 1GB 10
+            (Get-WpbdAnalysis $metrics).Statistics.Memory.AvailablePercent.Average | Should Be 6.25
+            Set-TestMemory $metrics 32GB 1850MB 10
+            (Get-WpbdAnalysis $metrics).MemoryAssessment.Category | Should Be 'Potential memory pressure'
+            Set-TestMemory $metrics 64GB 3GB 10
+            (Get-WpbdAnalysis $metrics).MemoryAssessment.Category | Should Be 'Elevated memory utilisation'
+            Set-TestMemory $metrics 64GB 600MB 0 95
+            (Get-WpbdAnalysis $metrics).MemoryAssessment.Category | Should Be 'Severe memory pressure'
+        }
+        It 'never uses installed RAM to supply a missing OS-visible denominator' {
+            $metrics = New-TestMetrics
+            Set-TestMemory $metrics 64GB 1GB 120
+            $metrics.System.VisibleMemoryBytes = $null
+            $report = Get-WpbdAnalysis $metrics
+            $report.Statistics.Memory.AvailablePercent.Average | Should BeNullOrEmpty
+            $report.MemoryAssessment.Category | Should Be 'Elevated memory utilisation'
+        }
+        It 'lowers confidence when paging is available and commit is missing' {
+            $metrics = New-TestMetrics
+            Set-TestMemory $metrics 16GB 1GB 25 $null
+            $report = Get-WpbdAnalysis $metrics
+            $report.MemoryAssessment.Category | Should Be 'Potential memory pressure'
+            $report.MemoryAssessment.Confidence | Should Be 'Low'
+            $report.Statistics.Memory.CommitPercent.Average | Should BeNullOrEmpty
+        }
+        It 'reports an advisory and an evidence gap when low headroom has unavailable corroboration' {
+            $metrics = New-TestMetrics
+            Set-TestMemory $metrics 16GB 1GB $null $null
+            foreach ($sample in $metrics.Samples) { $sample.Memory.PagesInputPerSecond = $null }
+            $report = Get-WpbdAnalysis $metrics
+            $report.MemoryAssessment.Category | Should Be 'Elevated memory utilisation'
+            $report.Advisories[0].Confidence | Should Be 'Low'
+            $report.Assessment.Category | Should Be 'Insufficient diagnostic data'
+        }
+        It 'reports insufficient memory data when all memory counters are unavailable' {
+            $metrics = New-TestMetrics
+            foreach ($sample in $metrics.Samples) { $sample.Memory = $null }
+            $report = Get-WpbdAnalysis $metrics
+            $report.MemoryAssessment.Category | Should Be 'Insufficient memory data'
+            $report.SamplingQuality.ValidSamples.MemoryAvailable | Should Be 0
+            $report.Statistics.Memory.UsedPercent.Average | Should BeNullOrEmpty
+        }
+        It 'retains separate rankings for verified identities that reuse a PID' {
+            $metrics = New-TestMetrics
+            $metrics.Samples[1].Processes[0].StartUtc = '2025-01-02T10:10:02.0000000Z'
+            $rank = (Get-WpbdAnalysis $metrics).Statistics.Processes.Leaders.CumulativeCpuSeconds
+            $rank.Count | Should Be 2
+            $rank[0].CumulativeCpuSeconds | Should Be 3.25
+            $rank[1].CumulativeCpuSeconds | Should Be 0.5
+        }
+        It 'keeps unverified process identities separate when a PID can have been reused' {
+            $metrics = New-TestMetrics
+            foreach ($sample in $metrics.Samples) {
+                $sample.Processes[0].StartUtc = $null
+                $sample.Processes[0].CpuSeconds = $null
+                $sample.Processes[0].CpuPercent = $null
+            }
+            $statistics = (Get-WpbdAnalysis $metrics).Statistics.Processes
+            $statistics.ObservedInstances | Should Be 5
+            $statistics.Leaders.PeakPrivateBytes.Count | Should Be 1
+            $statistics.Leaders.PeakPrivateBytes[0].Observations | Should Be 1
+            $statistics.Leaders.PeakPrivateBytes[0].PeakPrivateBytes | Should Be 505MB
+        }
+        It 'reports actual slots, valid counts and measured sampling overhead independently' {
+            $metrics = New-TestMetrics
+            $metrics.Samples = $metrics.Samples[0, 2, 3, 4]
+            $metrics.Samples[1].CpuTotalPercent = $null
+            $metrics.Samples[0] | Add-Member -NotePropertyName CollectionTiming -NotePropertyValue ([pscustomobject]@{
+                TotalSeconds = 2.5; StartDelaySeconds = 0.25; ProviderSeconds = [pscustomobject]@{ Cpu = 2.2 }
+            })
+            $metrics | Add-Member -NotePropertyName MissedSlots -NotePropertyValue @([pscustomobject]@{
+                FirstSlot = 2; LastSlot = 2; Count = 1; Reason = 'PreviousCaptureOverran'
+            })
+            $report = Get-WpbdAnalysis $metrics
+            $report.SamplingQuality.ExpectedSamples | Should Be 5
+            $report.SamplingQuality.ActualSamples | Should Be 4
+            $report.SamplingQuality.MissedSampleCount | Should Be 1
+            $report.SamplingQuality.MissedSlots[0].Reason | Should Be 'PreviousCaptureOverran'
+            $report.SamplingQuality.ValidSamples.CpuTotal | Should Be 3
+            $report.SamplingQuality.SamplesOverInterval | Should Be 1
+            $report.CollectionTiming.SampleWorkSeconds.Average | Should Be 2.5
+            $report.CollectionTiming.ProviderSeconds.Cpu.Maximum | Should Be 2.2
         }
         It 'requires latency evidence even with a busy disk and high queue' {
             (Get-WpbdAnalysis (New-TestMetrics -DiskBusy)).Assessment.Category | Should Be 'No clear bottleneck detected'
@@ -227,13 +480,17 @@ Describe 'WPBD diagnostic engine' {
             $report = Get-WpbdAnalysis $metrics
             $paths = Export-WpbdReport $report (Join-Path $TestDrive 'nested')
             $json = Get-Content -LiteralPath $paths.JsonPath -Raw | ConvertFrom-Json
-            $json.SchemaVersion | Should Be '0.1'
+            $json.SchemaVersion | Should Be '0.2'
             $json.Samples.Count | Should Be 5
             $json.Samples[0].CpuTotalPercent | Should BeNullOrEmpty
             $json.Samples[0].Memory.PageReadsPerSecond | Should Be 0
             $json.Statistics.Processes.Leaders.AverageCpuPercent[0].Id | Should Be 42
             $json.CollectionErrors[0].Count | Should Be 5
             $json.Findings[0].Measurements.CoverageGaps.Count | Should Be 2
+            $json.SamplingQuality.ValidSamples.CpuTotal | Should Be 0
+            $json.SamplingQuality.ActualSamples | Should Be 5
+            $json.MemoryAssessment.Category | Should Be 'Normal memory operation'
+            $json.Advisories.Count | Should Be 0
         }
         It 'renders readable, escaped and offline HTML with measurement sections' {
             $paths = Export-WpbdReport (Get-WpbdAnalysis (New-TestMetrics -Cpu)) $TestDrive
@@ -241,9 +498,21 @@ Describe 'WPBD diagnostic engine' {
             $html | Should Match '<h2>CPU</h2>'
             $html | Should Match '<td>Total CPU utilisation \(%\)</td>'
             $html | Should Match 'Suggested investigation'
+            $html | Should Match 'Sampling quality'
+            $html | Should Match 'Disk latency \(ms\)'
             $html | Should Match 'worker&lt;script&gt;'
             $html | Should Match 'TEST&lt;PC&gt;'
             $html | Should Not Match 'https?://|<script\b|<link\b'
+        }
+        It 'shows elevated memory as an advisory and escapes disk names in the timeline' {
+            $metrics = New-TestMetrics -HighMemory
+            foreach ($sample in $metrics.Samples) { $sample.Disks[0].Name = 'Disk<&>' }
+            $report = Get-WpbdAnalysis $metrics
+            $paths = Export-WpbdReport $report $TestDrive
+            $html = Get-Content -LiteralPath $paths.HtmlPath -Raw
+            $html | Should Match '<h2>Advisories</h2>\s*<article[^>]*><h3>Elevated memory utilisation</h3>'
+            $html | Should Match 'Disk&lt;&amp;&gt; \(read'
+            $html | Should Not Match 'Severe memory pressure|Disk<&>'
         }
         It 'does not overwrite a report even when exporting the same diagnostic again' {
             $report = Get-WpbdAnalysis (New-TestMetrics)
