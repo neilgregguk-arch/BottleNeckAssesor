@@ -2,6 +2,8 @@
 
 ## 0.6.0 — 2026-11-19
 
+- Kept the All Processes horizontal scrollbar visible at the bottom and gave executable paths a fixed width so wide results remain readable.
+
 - Added deterministic, evidence-linked diagnostic insights after the existing PowerShell analysis, without changing collection or bottleneck thresholds.
 - Added aligned CPU/memory application and unresolved-process candidates, conservative priorities, logical-processor context and bounded overlapping-resource context.
 - Added expandable Diagnostic Insights in Findings and offline HTML using the same recorded content; corrected the stale HTML version header.

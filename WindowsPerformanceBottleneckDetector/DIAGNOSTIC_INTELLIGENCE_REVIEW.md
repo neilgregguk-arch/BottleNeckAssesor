@@ -70,8 +70,8 @@ Application release: **0.6.0**. Diagnostic engine: **0.6.0**. JSON schema: **0.3
 - Filename: `WPBD-Setup-0.6.0-x64.exe`
 - Build path: `installer/artifacts/WPBD-Setup-0.6.0-x64.exe` under the project directory.
 - Absolute build path: `C:\Users\NGregg\OneDrive - ARK-H Handling Ltd\Documents\ChatGPT\Windows Performance Bottleneck Detector\WindowsPerformanceBottleneckDetector\installer\artifacts\WPBD-Setup-0.6.0-x64.exe`
-- Size: **46,488,397 bytes** (44.33 MiB).
-- SHA-256: `e6b692097afe0aaf2602f370833248aba602d45fb8ad97e808965669ec0aaeeb`
+- Size: **46,488,384 bytes** (44.33 MiB).
+- SHA-256: `09831a13f17e5e58083ca6c94a53d4569bc7d27851bfb5bb64d3c71823480715`
 - Unsigned self-contained Windows x64 installer; adjacent `.sha256` file provided.
 
 ## Known limitations
@@ -79,3 +79,7 @@ Application release: **0.6.0**. Diagnostic engine: **0.6.0**. JSON schema: **0.3
 The Windows computer-use helper repeatedly rejected the new application window binding with a window-ownership error; direct interactive UI review could not be completed. The WPF rendering harness checked binding/layout as described above. Full keyboard/screen-reader testing, physical Windows display scaling, clean-machine and Windows 10 testing remain unverified. The installer was compiled and its payload checked, but the full install/upgrade/uninstall lifecycle was not repeated for 0.6; prior lifecycle results remain documented in installer/VALIDATION.md.
 
 There is no process-level disk attribution, thread/affinity evidence, proven causal application assignment, or private-resident-memory measurement. Process reads are sequential, metadata can be restricted and short-lived processes can be missed. Candidate thresholds are transparent display heuristics, and coverage counts cannot establish complete process workload coverage. Insight-to-process navigation was not added; existing All Processes search and Applications remain available. Short observations cannot rule out intermittent problems. Raw live reports/logs with workstation information were kept outside source control.
+
+## All Processes layout follow-up
+
+The All Processes grid now always shows its bottom horizontal scrollbar. The executable-path column uses a fixed 320-pixel width instead of filling remaining space. A Release build passed with zero warnings/errors, and the actual WPF grid was exercised at 1320-, 1040- and 870-pixel content widths: the scrollbar stayed visible, column widths remained readable and scrolling reached the rightmost columns. Diagnostic logic is unchanged. The installer metadata above reflects the rebuilt package containing this adjustment.

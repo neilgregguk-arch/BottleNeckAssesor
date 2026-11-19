@@ -252,7 +252,8 @@
                                      AutomationProperties.Name="Search processes by name, PID, path or application"/>
                         </DockPanel>
                     </StackPanel>
-                    <DataGrid ItemsSource="{Binding Processes}" AlternationCount="2" AutomationProperties.Name="All captured processes">
+                    <DataGrid ItemsSource="{Binding Processes}" AlternationCount="2" AutomationProperties.Name="All captured processes"
+                              HorizontalScrollBarVisibility="Visible" VerticalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Process" Binding="{Binding Name}" Width="140" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="64" ElementStyle="{StaticResource CellText}"/>
@@ -266,7 +267,7 @@
                             <DataGridTextColumn Header="CPU time (s)" Binding="{Binding CpuSeconds, StringFormat=F2, TargetNullValue=Unavailable}" Width="91" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Private peak (MiB)" Binding="{Binding PrivateMiB, StringFormat=F1, TargetNullValue=Unavailable}" Width="125" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Working set (MiB)" Binding="{Binding WorkingSetMiB, StringFormat=F1, TargetNullValue=Unavailable}" Width="127" ElementStyle="{StaticResource CellText}"/>
-                            <DataGridTextColumn Header="Executable path" Binding="{Binding Path, TargetNullValue=Unavailable}" Width="*" MinWidth="180" ElementStyle="{StaticResource CellText}"/>
+                            <DataGridTextColumn Header="Executable path" Binding="{Binding Path, TargetNullValue=Unavailable}" Width="320" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Start (UTC)" Binding="{Binding StartUtc, TargetNullValue=Unavailable}" Width="210" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Ownership evidence" Binding="{Binding OwnershipEvidence}" Width="230" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Reason codes" Binding="{Binding AttributionReasons}" Width="270" ElementStyle="{StaticResource CellText}"/>
