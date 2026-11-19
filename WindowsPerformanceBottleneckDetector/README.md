@@ -1,5 +1,13 @@
 # Windows Performance Bottleneck Detector
 
+## 0.6.3 security architecture milestone
+
+The architecture work is documented in [the threat model](docs/security/ELEVATED_DIAGNOSTICS_THREAT_MODEL.md), [architecture decision](docs/security/ELEVATED_DIAGNOSTICS_ARCHITECTURE.md), [IPC specification](docs/security/ELEVATED_DIAGNOSTICS_IPC_PROTOCOL.md), [test plan](docs/security/ELEVATED_DIAGNOSTICS_TEST_PLAN.md) and [release gates](docs/security/ELEVATED_DIAGNOSTICS_RELEASE_GATES.md). The conditional recommendation is a per-user desktop plus a separately protected relay/one-scan worker package, with native UAC and a worker-owned read-only results pipe.
+
+The isolated [protocol-conformance lab](experiments/elevation-protocol/README.md) tests in-memory bounds, schemas and state transitions only. It creates no pipe, launches no process and demonstrates no privileged boundary. Protected deployment, authenticated native IPC, separate-account UAC and the protected component's installation/removal policy remain release blockers. A compromised same-user desktop session is not assumed trustworthy.
+
+**The shipped application remains 0.6.2 Standard-only.** No production source, sampling/classification rule, rejection gate or installer is changed by this milestone. No 0.6.3 installer is built and experimental code is not shipped. See [the milestone completion report](docs/security/MILESTONE_0_6_3_REPORT.md) for evidence and implementation phases.
+
 **WPBD 0.6.2 is a Standard-only permissions foundation. Optional elevated diagnostics remain incomplete and disabled.** The desktop does not request UAC or ship a privileged worker. The existing user-writable deployment is not being elevated without a completed trust-boundary design.
 
 WPBD presents evidence-based troubleshooting insights in concise summaries and readable tables in the Windows desktop app and offline reports, alongside process identity and attribution quality. WPBD samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. The read-only engine runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. It requires no agent, external PowerShell module or internet connection.

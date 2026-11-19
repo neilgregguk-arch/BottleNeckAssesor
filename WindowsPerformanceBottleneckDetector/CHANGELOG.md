@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.3 — 2026-11-19 — Security architecture milestone, not an application release
+
+- Revalidated the 0.6.2 deployment/trust-boundary findings and retained the unconditional elevation gate.
+- Added threat model, deployment alternatives/conditional hybrid recommendation, one-way IPC/worker/UAC design, repeatable security test plan and blocking release gates.
+- Added an isolated memory-stream protocol-conformance lab with strict inputs, bounds, sequencing and result-completeness tests. It performs no UAC, native IPC, process launching or privileged operations; it is not a security-boundary proof.
+- Recorded original regression/build/Standard Windows evidence separately from experimental tests. Protected installation, genuine authentication and cross-account elevation remain untested blockers.
+- Kept VERSION at 0.6.2 and production/installer source unchanged. No new installer or experimental production component is shipped.
+
 ## 0.6.2 — 2026-11-19 — Standard-only foundation; elevated feature incomplete
 
 - Stopped privileged execution at the release gate: the current user-writable deployment has not been replaced by a verified protected-worker/IPC architecture. Elevated is unavailable in the UI and rejected by the runner before process launch. No UAC request or privileged worker is shipped.
