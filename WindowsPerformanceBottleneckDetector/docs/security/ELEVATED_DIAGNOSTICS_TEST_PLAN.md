@@ -1,4 +1,4 @@
-# Elevated diagnostics test plan — 0.6.3
+# Elevated diagnostics test plan — 0.6.3 design / 0.6.4 partial evidence
 
 This is a repeatable acceptance plan, not a statement that a privileged boundary passed. Production remains 0.6.2 Standard-only. Run unprivileged tests under an ordinary account. Administrator/cross-account/installation tests require a dedicated authorised lab, separate accounts and disposable snapshots; no credentials in scripts, fixtures, logs or source control. Never weaken UAC, antivirus, WDAC/AppLocker or filesystem ACLs to obtain a pass.
 
@@ -58,3 +58,53 @@ Use the published engine only after its source hashes match the current producti
 - No mocked/native PID, protected-path, pipe-ACL, UAC or cross-account security result is represented as passed. No administrator lab was used.
 
 For every future A/X run, attach the precise binary/source revision and evidence to the corresponding gate. An untested blocker is not an exception allowing enablement.
+
+## Recorded 0.6.4 evidence — classification B
+
+19 November 2026; baseline `e50dd89`. Real host: Windows NT **10.0.26300 x64**. Primary token: elevation false, integrity RID 8192 (Medium), administrator group **not enabled**. This does not establish whether the account is an ordinary standard account or a filtered administrator; a separately authorised admin account/second standard account and disposable VM were not established. UAC registry observations: EnableLUA=1, ConsentPromptBehaviorAdmin=5, ConsentPromptBehaviorUser=3, PromptOnSecureDesktop=1. These were read only, not altered; they do not prove actual UAC consent/credential behaviour or enterprise application-control policy.
+
+No Visual C++/Windows SDK native toolchain was detected using installed-tool inventory/vswhere. No Native AOT publication, protected install, UAC invocation or admin-controlled experiment was attempted. Use the source-linked `experiments/elevation-worker/Test-Experiment.ps1` for repeatability; **do not elevate it**. The 0.6.3 protocol source is linked unchanged.
+
+| Evidence | Actual result | Limit |
+| --- | --- | --- |
+| Real Medium native transport | **21 checks passed**, including separate-process positive/negative sessions | User-owned Medium endpoint and mutable images, not High/protected/cross-account |
+| Real executable refusal | **21 checks passed**: fixed TokenProbeV1 primary-token refusal; command/script/path/privilege/process/service/operation, duplicate/extra/noncanonical/bounded input rejection; relay blocks before launch | No successful worker/UAC path |
+| Publish guard | Worker and Relay publication explicitly blocked before deployment output | Build outputs remain managed refusal/lab components; no native package |
+| Original memory conformance | **34 checks passed**, unchanged validator | U evidence only |
+| Original PowerShell regressions | **124 passed**, zero failed/skipped | Production Standard functionality |
+| Original .NET regressions | **21 passed** plus missing-engine check, including historical HTML/JSON and attribution fixtures | Existing nullable warning CS8602 at Program.cs:377 was emitted rebuilding unchanged tests; no production edits |
+| Desktop and experimental builds | Release passed; desktop and all three experimental builds zero warnings/errors | Not a Native AOT/installer build |
+| Standard real collection | Exact freshly built Engine hashes matched source; **15/15 samples**, permissions/ownership and paired reports passed; cancellation exported no partial report | Non-elevated only; average sample work 0.2660 s, insight 0.3919 s, not a security/performance guarantee |
+| Isolation | Source/VERSION/desktop/normal installer unchanged against e50dd89; no production reference or payload glob includes experiments | No normal installer rebuilt |
+
+The transport cases test: known-folder independence from ProgramFiles environment; held process start/PID/session substitution rejection; native owner/DACL/Medium label read-back; first-instance collision rejection; client write-access denial; overlapped connection cancellation; real valid transcript; wrong client; wrong server; oversized prefix; malformed UTF-8; duplicate properties; sequence gap; stale session; truncated body; data after complete; cancellation; terminal provider error; idle deadline; server disconnect; relay exit. Fixture processes are retained from actual launch, bounded and released without arbitrary-PID termination. Real PID reuse, remote/other-account clients, hard worker crashes and late UAC approval are not simulated into claimed passes. Negative payload tests require the intended rejection class, not merely EOF. Read-back is supplemented by actual client open/denial tests, but is not a complete effective-access audit.
+
+### Required 0.6.4 security scenarios
+
+| # | Scenario | Status / next evidence |
+| --- | --- | --- |
+| 1 | Protected worker ACLs | Not executed; no protected installation; A/X effective modify/delete/rename/DACL/ownership tests required |
+| 2 | Parent-directory substitution | Not executed; A/X ancestor/handle/reparse/race tests required |
+| 3 | DLL/dependency substitution | Not executed; native inventory and loader trace required; System32-only P/Invoke resolution in lab is not full loader proof |
+| 4 | Untrusted CWD/PATH | Not executed as loader attack; known-folder environment test does not cover it |
+| 5 | Worker arguments | W: real executable refusal negatives passed; no high-worker parser evidence |
+| 6 | Arbitrary commands | W: no supported command endpoint; command/script/executable/kill/service flags rejected |
+| 7 | Real UAC approval | Not executed; native runas and protected launch handle required |
+| 8 | UAC cancellation | Not executed; Medium pipe cancellation is a different test |
+| 9 | Separate admin account | Not executed; A/X required |
+| 10 | Worker token | W: genuine Medium primary token refused; high/admin/token-probe result path unimplemented |
+| 11 | Endpoint ownership | W: own Medium owner/DACL/label inspected; High/admin descriptor and effective cross-account access untested |
+| 12 | Incorrect peer | W: kernel client/server PID/session compared with retained specific Medium peers; wrong-peer tests rejected |
+| 13 | Endpoint spoofing | W subset: first-instance collision and wrong-server mismatch; high spoof/other-account/injection tests outstanding |
+| 14 | PID substitution/reuse | W: mismatched PID/start/session rejected, held lifetimes observed; forced reuse not tested |
+| 15 | Replay | U + W: stale session/sequence rejected; real cross-session high replay untested |
+| 16 | Oversized messages | U + W: prefix rejected before body read/allocation |
+| 17 | Malformed payload | U + W: UTF-8/duplicate/schema/order/completeness rejection; full high-endpoint fuzzing outstanding |
+| 18 | Worker termination | W subset: server closes connection; no elevated process crash/forced termination tested |
+| 19 | Relay termination | W: fixture exits, held lifetime signals and server write fails; no privileged orphan test |
+| 20 | Timeouts | W: actual connect cancellation/read idle deadline; privileged watchdog/supervision unimplemented |
+| 21 | Cleanup after failure | W: bounded fixtures exit and handles dispose; protected/UAC cleanup untested |
+| 22 | Experimental removal | Not executed: no installer/protected component exists; reviewed admin-only install/remove package required |
+| 23 | Production isolation | D + W: unchanged paths/gates/build/regressions/Standard integration; no experiment in normal installer |
+
+Incorrect credentials, policy denial, worker launch failure, Administrator protection and WDAC/AppLocker/endpoint-security behaviour remain unexecuted A/X tests. No UAC or endpoint-security setting was weakened. G01–G12 stay open (G07 partial). See [0.6.4 report](MILESTONE_0_6_4_REPORT.md) for installation deferral and next milestone.

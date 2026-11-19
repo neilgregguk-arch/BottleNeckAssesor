@@ -1,5 +1,11 @@
 # Windows Performance Bottleneck Detector
 
+## 0.6.4 experimental milestone — partial proof of concept (B)
+
+The isolated [worker experiment](experiments/elevation-worker/README.md) adds native Windows token/process observations, real **Medium-to-Medium** named-pipe tests using the unchanged 0.6.3 protocol validator, and fail-closed relay/worker refusal entry points. It does not implement a working elevated token probe, protected package or UAC launch. Native build tooling and a disposable multi-account administrator lab remain prerequisites; protected installation/removal, High endpoint ownership and authenticated cross-account communication are unvalidated blockers.
+
+**Production remains 0.6.2 Standard-only**, with the unconditional elevation gate, installer, sampling/classification and report formats unchanged. Experimental builds stay outside production and cannot be published as protected relay/worker packages. No new installer is built. See [the 0.6.4 report](docs/security/MILESTONE_0_6_4_REPORT.md) for actual tests, limitations and next steps.
+
 ## 0.6.3 security architecture milestone
 
 The architecture work is documented in [the threat model](docs/security/ELEVATED_DIAGNOSTICS_THREAT_MODEL.md), [architecture decision](docs/security/ELEVATED_DIAGNOSTICS_ARCHITECTURE.md), [IPC specification](docs/security/ELEVATED_DIAGNOSTICS_IPC_PROTOCOL.md), [test plan](docs/security/ELEVATED_DIAGNOSTICS_TEST_PLAN.md) and [release gates](docs/security/ELEVATED_DIAGNOSTICS_RELEASE_GATES.md). The conditional recommendation is a per-user desktop plus a separately protected relay/one-scan worker package, with native UAC and a worker-owned read-only results pipe.

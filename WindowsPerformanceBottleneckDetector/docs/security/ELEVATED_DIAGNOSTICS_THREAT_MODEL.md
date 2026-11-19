@@ -2,6 +2,8 @@
 
 Status: design review, 19 November 2026. Production remains 0.6.2 Standard-only. No privileged boundary has been validated. Read with [Architecture](ELEVATED_DIAGNOSTICS_ARCHITECTURE.md), [Protocol](ELEVATED_DIAGNOSTICS_IPC_PROTOCOL.md), [Tests](ELEVATED_DIAGNOSTICS_TEST_PLAN.md) and [Release gates](ELEVATED_DIAGNOSTICS_RELEASE_GATES.md).
 
+0.6.4 adds real unprivileged Windows transport/refusal evidence only ([report](MILESTONE_0_6_4_REPORT.md)). The Medium lab server is owned by the original user, who can change its DACL; both executable images are user-writable. Kernel PID/session checks and retained handles bind the particular test peers but cannot make these images protected or the same-user session trustworthy. Other-account, high-integrity, effective protected-file access, loader substitution and privileged lifecycle attacks remain untested blockers. No new privileged endpoint, arbitrary operation or production trust boundary is introduced. The native/AOT build and disposable multi-account deployment prerequisites are unavailable; fail-closed entry points enforce that limitation.
+
 ## Revalidated baseline
 
 At baseline commit `9135515`, the installer still uses LocalAppData and lowest privileges; desktop is asInvoker; Standard PowerShell loads neighbouring files; Elevated is rejected before discovery/launch; there is no privileged worker/IPC. Token/coverage reporting remains present. A fresh read-only ACL inspection of the installed **0.6.2** executable confirmed current-user ownership and a current-user write grant. This verifies a current deployment fact, not a protected-installation test.

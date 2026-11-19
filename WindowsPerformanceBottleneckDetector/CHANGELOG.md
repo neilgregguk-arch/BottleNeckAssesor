@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.4 — 2026-11-19 — Experimental partial proof of concept (B)
+
+- Added isolated native primary-token/process/known-folder observations and real separate-process Medium named-pipe tests, reusing the unchanged 0.6.3 protocol validator.
+- Added refusal-stage worker/relay entry points and executable negative tests; deployment/publish remain blocked. No successful elevated operation, native UAC launch or protected installer is implemented.
+- Updated all five security documents, scenario-by-scenario test evidence and the 0.6.4 report. Protected deployment, native tooling, disposable multi-account lab, High endpoint and cross-account testing remain open blockers.
+- Preserved production 0.6.2, its unconditional elevation gate, diagnostics, report formats and normal installer. No experimental binary is shipped or committed.
+
 ## 0.6.3 — 2026-11-19 — Security architecture milestone, not an application release
 
 - Revalidated the 0.6.2 deployment/trust-boundary findings and retained the unconditional elevation gate.

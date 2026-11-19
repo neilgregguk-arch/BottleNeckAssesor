@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Common/*.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="../../elevation-protocol/Protocol.cs" Link="Protocol.cs" />
+  </ItemGroup>
+</Project>

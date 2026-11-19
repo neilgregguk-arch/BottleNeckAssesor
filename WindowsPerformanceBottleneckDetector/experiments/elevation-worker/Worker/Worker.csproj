@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Common/Native.cs" Link="Native.cs" />
+    <Compile Include="../../elevation-protocol/Protocol.cs" Link="Protocol.cs" />
+  </ItemGroup>
+  <Target Name="BlockUnreviewedPublish" BeforeTargets="PrepareForPublish;Publish">
+    <Error Text="No deployable worker: native/AOT toolchain, protected inventory/signing and administrator-lab validation remain open. Build is for non-elevated refusal tests only." />
+  </Target>
+</Project>

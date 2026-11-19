@@ -2,6 +2,12 @@
 
 Decision record, 19 November 2026. Milestone 0.6.3; shipped application remains 0.6.2. Production code, rejection gate, installer and classification engine are unchanged. [Threat model](ELEVATED_DIAGNOSTICS_THREAT_MODEL.md) defines the limits of this design.
 
+## 0.6.4 implementation status — partial proof of concept (B)
+
+The [0.6.4 report](MILESTONE_0_6_4_REPORT.md) records real **Medium-to-Medium** Windows pipe tests, native primary-token/process observations and refusal-stage relay/worker entry points in `experiments/elevation-worker`. There is no protected deployment, UAC launch, successful elevated worker operation or authenticated cross-account channel. The host has no detected native C++/Windows SDK toolchain or established disposable multi-account administrator lab. Managed outputs cannot substitute for the proposed native privileged entry point; publish is blocked and the protected-deployment gate is unconditional.
+
+No trust assumption is relaxed. The lab's original-user-owned **Medium** pipe is a separate test object under `WPBD.Experimental.Medium.v1`, not the candidate high/admin-owned endpoint. A user's implicit owner rights and user-writable images prevent promoting those tests into protected-peer authentication evidence. There is no `ShellExecuteExW` implementation yet: native UAC integration is deferred until a reviewed protected inventory exists. A fixed, reviewed admin install/remove package remains unimplemented; no protected components are left behind. The prompt authorises experimental admin-controlled lifecycle testing in a suitable disposable lab; it does not close product deployment, signing or effective-access gates.
+
 ## Recommendation: Option B, protected optional broker package
 
 Keep the existing per-user desktop and Standard engine. Separately deploy an administrator-protected package containing a small **asInvoker relay** and a **one-scan elevated worker**. Prefer a native/AOT supervisor for the privileged entry point so a managed startup hook cannot run before validation. Full diagnostics would retain the authoritative PowerShell analysis only after every script/module/runtime load is protected and traced. The first privileged implementation should support only a native token probe.

@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup><Compile Include="../Common/Native.cs" Link="Native.cs" /></ItemGroup>
+  <Target Name="BlockUnreviewedPublish" BeforeTargets="PrepareForPublish;Publish">
+    <Error Text="No deployable relay: protected inventory/signing and administrator-lab validation remain open. Build is for non-elevated refusal tests only." />
+  </Target>
+</Project>
