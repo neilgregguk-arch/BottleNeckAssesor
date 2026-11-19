@@ -39,7 +39,8 @@ public sealed record ProcessReading(string Name, int Pid, string? StartUtc, doub
     string Application = "Unattributed", string OwnershipEvidence = "No verified ownership metadata", string? InstanceKey = null,
     string IdentityStatus = "Legacy identity", string AttributionCategory = "Legacy attribution unavailable",
     string AttributionConfidence = "Unavailable", string MetadataAccess = "Unavailable", int? ParentPid = null,
-    string? Services = null, string? PackageDirectory = null, int? Observations = null);
+    string? Services = null, string? PackageDirectory = null, int? Observations = null,
+    string? AttributionReasons = null, string MetadataIdentityMatch = "Unavailable", string? ImagePathSource = null);
 
 public sealed record ApplicationReading(string Name, string Key, double? PrivateMiB, double? WorkingSetMiB,
     int PrivateSamples, int WorkingSetSamples, IReadOnlyList<ProcessReading> Processes,
@@ -48,7 +49,8 @@ public sealed record ApplicationReading(string Name, string Key, double? Private
 
 public sealed record AttributionQuality(int UniqueIdentities, int UniquePids, int Verified, int Provisional,
     int Identified, int WindowsSystem, int Restricted, int Unattributed, int Unknown, int Observations,
-    int PeakConcurrent, double? AttributedPercent, double? UnattributedPrivateMiB, int RestrictedOwnership = 0);
+    int PeakConcurrent, double? AttributedPercent, double? UnattributedPrivateMiB, int RestrictedOwnership = 0,
+    int IdentifiedServices = 0, double? ApplicationAndWindowsPercent = null);
 
 public sealed record SamplingQuality(int Expected, int Actual, int ValidCpu, int Missed, double DurationSeconds,
     IReadOnlyList<string> Errors, double? AverageWorkSeconds, double? PeakWorkSeconds);
@@ -219,7 +221,9 @@ public static class DiagnosticData
         item.Text("AttributionCategory") ?? "Legacy attribution unavailable",
         item.Text("AttributionConfidence") ?? "Unavailable", item.Text("MetadataAccess") ?? "Unavailable",
         item.Int("ParentId"), string.Join(", ", item.Field("Services").Items().Select(service => service.GetString())),
-        item.Text("PackageDirectory"), item.Int("Observations"));
+        item.Text("PackageDirectory"), item.Int("Observations"),
+        string.Join(", ", item.Field("AttributionReasons").Items().Select(reason => reason.GetString())),
+        item.Text("MetadataIdentityMatch") ?? "Unavailable", item.Text("ImagePathSource"));
 
     private static IReadOnlyList<ProcessReading> ParseAllProcesses(JsonElement root)
     {
@@ -270,7 +274,8 @@ public static class DiagnosticData
             quality.Int("UnknownOwnership") ?? 0,
             quality.Int("Observations") ?? 0, (int)(quality.Field("ConcurrentProcesses").Number("Maximum") ?? 0),
             quality.Number("AttributedPercent"), quality.Field("UnattributedPrivateBytes").Number("Maximum") / 1048576,
-            quality.Int("RestrictedOwnership") ?? 0);
+            quality.Int("RestrictedOwnership") ?? 0, quality.Int("IdentifiedServices") ?? 0,
+            quality.Number("ApplicationAndWindowsPercent"));
     }
 
     private static string RequiredText(JsonElement source, string key) =>

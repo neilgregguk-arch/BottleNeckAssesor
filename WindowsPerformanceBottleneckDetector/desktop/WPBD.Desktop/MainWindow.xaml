@@ -251,6 +251,9 @@
                             <DataGridTextColumn Header="Executable path" Binding="{Binding Path, TargetNullValue=Unavailable}" Width="*" MinWidth="180" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Start (UTC)" Binding="{Binding StartUtc, TargetNullValue=Unavailable}" Width="210" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Ownership evidence" Binding="{Binding OwnershipEvidence}" Width="230" ElementStyle="{StaticResource CellText}"/>
+                            <DataGridTextColumn Header="Reason codes" Binding="{Binding AttributionReasons}" Width="270" ElementStyle="{StaticResource CellText}"/>
+                            <DataGridTextColumn Header="Metadata identity match" Binding="{Binding MetadataIdentityMatch}" Width="165" ElementStyle="{StaticResource CellText}"/>
+                            <DataGridTextColumn Header="Image path source" Binding="{Binding ImagePathSource, TargetNullValue=Unavailable}" Width="140" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Services" Binding="{Binding Services}" Width="210" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Package directory" Binding="{Binding PackageDirectory, TargetNullValue=Unavailable}" Width="240" ElementStyle="{StaticResource CellText}"/>
                         </DataGrid.Columns>

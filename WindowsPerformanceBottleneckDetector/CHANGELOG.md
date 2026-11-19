@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1
+
+- Retained provisional identities while allowing conservative metadata matches through matching before/after PID, name and CIM creation evidence.
+- Added a separate medium-confidence service category, intersecting shared service names across boundaries without inferring publishers or applications.
+- Added cached read-only limited-information image queries for missing CIM paths, with native creation validation and a two-second inventory lookup budget outside timed sampling.
+- Recognised additional Windows components only at actual Windows system directory paths.
+- Added reason codes, metadata match and path-source evidence, separate service/application coverage and enrichment/analysis timing to optional schema 0.3 fields, HTML and existing process views.
+- Preserved historical readers, identity reuse safeguards, aligned memory, diagnostic classifications, installer AppId and per-user settings.
+- Added focused PowerShell and .NET regressions; actual coverage and timing measurements are documented in the attribution refinement review.
+
 ## 0.5.0
 
 - Corrected per-slot identity inflation for inaccessible process start times by tracking explicitly provisional consecutive PID/name observations.

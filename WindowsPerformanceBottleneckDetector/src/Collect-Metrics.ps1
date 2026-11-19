@@ -13,7 +13,8 @@ function Add-WpbdCollectionError {
 }
 
 function Get-WpbdCim {
-    param([string] $Class, $Errors, [string] $Filter, [int] $TimeoutSeconds = 3)
+    param([string] $Class, $Errors, [string] $Filter, [int] $TimeoutSeconds = 3, [ref] $Status)
+    if ($Status) { $Status.Value = 'Available' }
     try {
         $options = @{ ClassName = $Class; OperationTimeoutSec = $TimeoutSeconds; ErrorAction = 'Stop' }
         if ($Filter) { $options.Filter = $Filter }
@@ -27,6 +28,13 @@ function Get-WpbdCim {
         $code = if ($exception -is [TimeoutException] -or $exception.NativeErrorCode -match 'timeout' -or
             $exception.Message -match '\btimed out\b|\btimeout\b') { 'Timeout' } else { 'QueryFailed' }
         Add-WpbdCollectionError $Errors $Class $code $exception.Message
+        if ($Status) {
+            $Status.Value = 'Unavailable'
+            if ($exception.GetBaseException() -is [UnauthorizedAccessException] -or
+                $exception.NativeErrorCode -eq 'AccessDenied' -or $exception.HResult -eq -2147024891) {
+                $Status.Value = 'AccessDenied'
+            }
+        }
     }
 }
 
@@ -398,7 +406,8 @@ function Get-WpbdMetrics {
     $errors = [ordered]@{}
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $system = Get-WpbdSystem $errors
-    $metadata = @(Get-WpbdProcessMetadata $errors)
+    $metadataBefore = $null
+    $metadata = @(Get-WpbdProcessMetadata $errors -Phase Before -Timing ([ref] $metadataBefore))
     $inventorySeconds = $clock.Elapsed.TotalSeconds
     $processorState = @{
         PreferredClass = 'Win32_PerfRawData_Counters_ProcessorInformation'
@@ -495,7 +504,8 @@ function Get-WpbdMetrics {
     $postSampling = [Diagnostics.Stopwatch]::StartNew()
     Write-Verbose 'Reading drive capacity and recent critical events after performance sampling.'
     $paths = Get-WpbdProcessPaths $before.Processes $errors
-    $metadata += @(Get-WpbdProcessMetadata $errors)
+    $metadataAfter = $null
+    $metadata += @(Get-WpbdProcessMetadata $errors -Phase After -Timing ([ref] $metadataAfter))
     if ($CancellationSignal -and $CancellationSignal.WaitOne(0)) { throw [OperationCanceledException]::new() }
     $drives = @(Get-WpbdDrives $errors)
     $events = @(Get-WpbdCriticalEvents $errors)
@@ -515,6 +525,7 @@ function Get-WpbdMetrics {
         CollectionTiming = [pscustomobject]@{
             InventorySeconds = $inventorySeconds; Baseline = $baselineTiming
             PostSamplingSeconds = $postSampling.Elapsed.TotalSeconds
+            ProcessMetadataBefore = $metadataBefore; ProcessMetadataAfter = $metadataAfter
         }
         Samples = $samples.ToArray(); Drives = $drives; CriticalSystemEvents = $events; ProcessPaths = $paths
         ProcessMetadata = $metadata

@@ -7,6 +7,28 @@ var temporary = Directory.CreateTempSubdirectory("wpbd-tests-").FullName;
 var valid = Path.Combine(temporary, "WPBD-test.json");
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("0.5.1 optional attribution evidence and service-only coverage round trip", async () =>
+    {
+        var document = JsonNode.Parse(Fixture("0.3"))!;
+        document["Statistics"]!["Processes"]!["All"] = new JsonArray(new JsonObject {
+            ["Id"] = 55, ["Name"] = "agent", ["InstanceKey"] = "provisional/55/1",
+            ["IdentityStatus"] = "Provisional", ["AttributionCategory"] = "Identified service process",
+            ["MetadataIdentityMatch"] = "BracketedInventories", ["ImagePathSource"] = "LimitedInformation",
+            ["AttributionReasons"] = new JsonArray("AccessDenied", "PathUnavailable"),
+            ["Services"] = new JsonArray("ServiceA", "ServiceB") });
+        document["AttributionQuality"] = new JsonObject { ["UniqueIdentities"] = 1,
+            ["IdentifiedServices"] = 1, ["AttributedPercent"] = 100, ["ApplicationAndWindowsPercent"] = 0 };
+        await File.WriteAllTextAsync(valid, document.ToJsonString());
+        var report = await DiagnosticData.LoadAsync(valid);
+        Check(report.Processes.Single() is { MetadataIdentityMatch: "BracketedInventories", ImagePathSource: "LimitedInformation" }
+            && report.Processes.Single().AttributionReasons!.Contains("AccessDenied"), "Enrichment evidence was lost.");
+        Check(report.Attribution is { IdentifiedServices: 1, AttributedPercent: 100, ApplicationAndWindowsPercent: 0 },
+            "Service-only evidence was confused with application ownership.");
+        await File.WriteAllTextAsync(valid, Fixture("0.3"));
+        var historical = await DiagnosticData.LoadAsync(valid);
+        Check(historical.Processes.All(p => p.AttributionReasons is null && p.MetadataIdentityMatch == "Unavailable"),
+            "Missing historical evidence was fabricated.");
+    }),
     ("schema 0.3 preserves provisional identity, access, service and application quality fields", async () =>
     {
         var document = JsonNode.Parse(Fixture("0.3"))!;

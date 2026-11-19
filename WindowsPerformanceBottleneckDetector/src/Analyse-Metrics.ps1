@@ -291,6 +291,8 @@ function Get-WpbdSamplingSummary {
             InventorySeconds = $Metrics.CollectionTiming.InventorySeconds
             Baseline = $Metrics.CollectionTiming.Baseline
             PostSamplingSeconds = $Metrics.CollectionTiming.PostSamplingSeconds
+            ProcessMetadataBefore = $Metrics.CollectionTiming.ProcessMetadataBefore
+            ProcessMetadataAfter = $Metrics.CollectionTiming.ProcessMetadataAfter
             SampleWorkSeconds = Get-WpbdStatistics $timings 'TotalSeconds'
             SampleStartDelaySeconds = Get-WpbdStatistics $timings 'StartDelaySeconds'
             ProviderSeconds = [pscustomobject] $providers
@@ -333,10 +335,12 @@ function Get-WpbdAnalysis {
     $cpuFraction = Get-WpbdRatio $cpuHigh $cpu.Count
     $cpu | Add-Member -NotePropertyName SamplesAboveThreshold -NotePropertyValue $cpuHigh
     $cpu | Add-Member -NotePropertyName PercentAboveThreshold -NotePropertyValue (Get-WpbdRatio $cpuHigh $cpu.Count 100)
+    $attributionWatch = [Diagnostics.Stopwatch]::StartNew()
     $process = Get-WpbdProcessStatistics $samples $Metrics.ProcessPaths $Metrics.System.LogicalProcessorCount
     $applications = @(Get-WpbdApplications $samples $process.All $Metrics.ProcessMetadata)
     $process.InstancesWithMissingPath = @($process.All | Where-Object { -not $_.Path }).Count
     $attribution = Get-WpbdAttributionQuality $samples $process.All
+    $attributionWatch.Stop()
     if ($cpu.Count -lt $required) {
         $gaps.Add("Total CPU ($($cpu.Count) usable samples, $required required)")
     } elseif ($cpuHigh -ge $thresholds.MinimumSamples -and $cpuFraction -ge $thresholds.SustainedFraction) {
@@ -431,6 +435,7 @@ function Get-WpbdAnalysis {
     $advisories = @()
     if ($memory.Advisory) { $advisories = @($memory.Advisory) }
     $sampling = Get-WpbdSamplingSummary $Metrics $samples $expected $cpu $memory.Statistics
+    $sampling.Timing | Add-Member -NotePropertyName AttributionAnalysisSeconds -NotePropertyValue $attributionWatch.Elapsed.TotalSeconds
     [pscustomobject]@{
         SchemaVersion = '0.3'
         Configuration = $Metrics.Configuration; Thresholds = [pscustomobject] $thresholds; System = $Metrics.System

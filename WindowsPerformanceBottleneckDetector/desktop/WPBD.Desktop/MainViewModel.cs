@@ -114,7 +114,7 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     private string _applicationSort = "Private memory";
     public ICollectionView Processes => _processes;
     public ICollectionView Applications => _applications;
-    public IReadOnlyList<string> ProcessFilters { get; } = ["All captured", "Identified application", "Windows system process",
+    public IReadOnlyList<string> ProcessFilters { get; } = ["All captured", "Identified application", "Windows system process", "Identified service process",
         "Protected or restricted process", "Unattributed application process", "Unknown process ownership",
         "Metadata restricted", "Verified identity", "Provisional identity", "CPU measured", "Memory measured"];
     public IReadOnlyList<string> ApplicationSorts { get; } = ["Private memory", "Working set", "CPU", "Name"];
@@ -137,7 +137,7 @@ internal sealed class MainViewModel : INotifyPropertyChanged
         ? $"{quality.UniqueIdentities} identities · {quality.Verified} verified · {quality.Provisional} provisional · {quality.UniquePids} distinct PIDs · {quality.Observations} observations · peak {quality.PeakConcurrent} concurrently captured"
         : $"{_report?.Processes.Count ?? 0} recorded entries. Historical reports retain their original identity rules.";
     public string AttributionSummary => _report?.Attribution is { } quality
-        ? $"{quality.Identified} identified application · {quality.WindowsSystem} Windows system · {quality.RestrictedOwnership} protected/restricted ownership · {quality.Unattributed} unattributed application · {quality.Unknown} unknown ownership. Attributed {Format(quality.AttributedPercent, "0.0", "%")}. Restricted metadata affects {quality.Restricted} identities and can overlap a known process type."
+        ? $"{quality.Identified} identified application · {quality.WindowsSystem} Windows system · {quality.IdentifiedServices} service-only identities · {quality.RestrictedOwnership} protected/restricted ownership · {quality.Unattributed} unattributed application · {quality.Unknown} unknown ownership. Attributed {Format(quality.AttributedPercent, "0.0", "%")}. Restricted metadata affects {quality.Restricted} identities and can overlap a known process type."
         : "Attribution quality was not recorded in this report.";
     public string AttributionMemory => _report?.Attribution is { } quality
         ? $"Unattributed private-memory footprint peaked at {Format(quality.UnattributedPrivateMiB, "N1", " MiB")} using complete same-sample totals. Attribution confidence describes ownership evidence independently of measurement availability."
@@ -145,7 +145,7 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     private bool FilterProcess(object item)
     {
         var process = (ProcessReading)item;
-        var text = $"{process.Name} {process.Pid} {process.Path} {process.Application} {process.Services} {process.AttributionCategory}";
+        var text = $"{process.Name} {process.Pid} {process.Path} {process.Application} {process.Services} {process.AttributionCategory} {process.AttributionReasons}";
         return text.Contains(_processSearch, StringComparison.OrdinalIgnoreCase) && _processFilter switch
         {
             "Metadata restricted" => process.MetadataAccess == "Restricted",

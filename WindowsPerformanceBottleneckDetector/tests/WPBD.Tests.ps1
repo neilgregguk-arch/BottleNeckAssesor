@@ -1,5 +1,153 @@
 Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'src/WPBD.psm1') -Force
 
+Describe '0.5.1 conservative metadata enrichment' {
+    InModuleScope WPBD {
+        function New-BracketFixture {
+            $start='2026-01-01T00:00:00Z'
+            $samples=@(foreach ($slot in 1..2) { [pscustomobject]@{
+                Slot=$slot;TimestampUtc="2026-01-02T00:00:0${slot}Z";Processes=@(
+                    [pscustomobject]@{Id=55;Name='agent';StartUtc=$null;MetadataAccess='Restricted';PrivateBytes=10MB;WorkingSetBytes=9MB}
+                )
+            }})
+            $metadata=@(foreach ($phase in @('Before','After')) { [pscustomobject]@{
+                Id=55;Identity=(Get-WpbdProcessIdentity 55 $start);StartUtc=$start;Name='agent.exe';Path=$null
+                ParentId=0;ParentStartUtc=$null;Services=@('ServiceA','ServiceB');Phase=$phase
+                CapturedUtc=$(if($phase -eq 'Before'){'2026-01-02T00:00:00Z'}else{'2026-01-02T00:00:03Z'})
+                PathStatus='AccessDenied';PathSource='LimitedInformation';ServiceLookupStatus='Available'
+            }})
+            [pscustomobject]@{Samples=$samples;Metadata=$metadata}
+        }
+        It 'identifies shared services at both boundaries without upgrading provisional identity or inventing an application' {
+            $f=New-BracketFixture
+            $stats=Get-WpbdProcessStatistics $f.Samples @{} 4
+            $groups=@(Get-WpbdApplications $f.Samples $stats.All $f.Metadata)
+            $p=$stats.All[0]
+            $p.AttributionCategory | Should Be 'Identified service process'
+            $p.Services.Count | Should Be 2
+            $p.IdentityStatus | Should Be 'Provisional'
+            $p.MetadataIdentityMatch | Should Be 'BracketedInventories'
+            $p.AttributionConfidence | Should Be 'Medium'
+            ($p.AttributionReasons -contains 'AccessDenied') | Should Be $true
+            $groups[0].PrivateBytes.Maximum | Should Be 10MB
+            $q=Get-WpbdAttributionQuality $f.Samples $stats.All
+            $q.IdentifiedApplications | Should Be 0
+            $q.IdentifiedServices | Should Be 1
+            $q.AttributedPercent | Should Be 100
+            $q.ApplicationAndWindowsPercent | Should Be 0
+        }
+        It 'rejects reused PIDs even with the same service and executable name' {
+            $f=New-BracketFixture
+            $f.Metadata[1].StartUtc='2026-01-02T00:00:02Z'
+            $f.Metadata[1].Identity=Get-WpbdProcessIdentity 55 $f.Metadata[1].StartUtc
+            $stats=Get-WpbdProcessStatistics $f.Samples @{} 4
+            Get-WpbdApplications $f.Samples $stats.All $f.Metadata | Out-Null
+            $stats.All[0].AttributionCategory | Should Be 'Protected or restricted process'
+            $stats.All[0].MetadataIdentityMatch | Should Be 'Unavailable'
+        }
+        It 'does not use a single inventory or historical rows to infer provisional ownership' {
+            $f=New-BracketFixture
+            $stats=Get-WpbdProcessStatistics $f.Samples @{} 4
+            Get-WpbdApplications $f.Samples $stats.All @($f.Metadata[0]) | Out-Null
+            $stats.All[0].Services.Count | Should Be 0
+            foreach($row in $f.Metadata) { $row.Phase=$null }
+            Get-WpbdApplications $f.Samples $stats.All $f.Metadata | Out-Null
+            $stats.All[0].MetadataIdentityMatch | Should Be 'Unavailable'
+        }
+        It 'intersects shared services and does not mutate original boundary inventories' {
+            $f=New-BracketFixture
+            $f.Metadata[1].Services=@('ServiceB','ServiceC')
+            $stats=Get-WpbdProcessStatistics $f.Samples @{} 4
+            Get-WpbdApplications $f.Samples $stats.All $f.Metadata | Out-Null
+            $stats.All[0].Services.Count | Should Be 1
+            $stats.All[0].Services[0] | Should Be 'ServiceB'
+            $f.Metadata[0].Services.Count | Should Be 2
+            $f.Metadata[1].Services.Count | Should Be 2
+        }
+        It 'reports absent optional paths without access denial and explains unavailable service metadata' {
+            $f=New-BracketFixture
+            foreach($sample in $f.Samples) { $sample.Processes[0].MetadataAccess='Unavailable' }
+            foreach($row in $f.Metadata) { $row.Services=@(); $row.PathStatus='PathUnavailable'; $row.ServiceLookupStatus='Unavailable' }
+            $stats=Get-WpbdProcessStatistics $f.Samples @{} 4
+            Get-WpbdApplications $f.Samples $stats.All $f.Metadata | Out-Null
+            ($stats.All[0].AttributionReasons -contains 'AccessDenied') | Should Be $false
+            ($stats.All[0].AttributionReasons -contains 'ServiceMetadataUnavailable') | Should Be $true
+            ($stats.All[0].AttributionReasons -contains 'PathUnavailable') | Should Be $true
+            ($stats.All[0].AttributionReasons -contains 'OwnershipUnresolved') | Should Be $true
+        }
+        It 'retains termination and lookup-budget reasons without fabricating ownership' {
+            foreach($reason in @('ProcessExited','LookupBudgetExceeded','IdentityMismatch','LookupUnavailable')) {
+                $f=New-BracketFixture
+                foreach($row in $f.Metadata) { $row.Services=@(); $row.PathStatus=$reason }
+                $stats=Get-WpbdProcessStatistics $f.Samples @{} 4
+                Get-WpbdApplications $f.Samples $stats.All $f.Metadata | Out-Null
+                ($stats.All[0].AttributionReasons -contains $reason) | Should Be $true
+            }
+        }
+        It 'retains after-inventory failures even when the earlier inventory succeeded' {
+            $f=New-BracketFixture
+            $f.Metadata[1].PathStatus='ProcessExited'
+            $f.Metadata[1].ServiceLookupStatus='Unavailable'
+            $f.Metadata[1].Services=@()
+            $stats=Get-WpbdProcessStatistics $f.Samples @{} 4
+            Get-WpbdApplications $f.Samples $stats.All $f.Metadata | Out-Null
+            ($stats.All[0].AttributionReasons -contains 'ProcessExited') | Should Be $true
+            ($stats.All[0].AttributionReasons -contains 'ServiceMetadataUnavailable') | Should Be $true
+            $stats.All[0].Services.Count | Should Be 0
+        }
+        It 'requires the actual Windows directory for newly recognised component names' {
+            foreach($name in @('SearchIndexer','spoolsv','RuntimeBroker','SecurityHealthService')) {
+                $f=New-BracketFixture
+                foreach($sample in $f.Samples) { $sample.Processes[0].Name=$name }
+                foreach($row in $f.Metadata) { $row.Name="$name.exe"; $row.Path=Join-Path ([Environment]::GetFolderPath('Windows')) "System32\$name.exe" }
+                $stats=Get-WpbdProcessStatistics $f.Samples @{} 4
+                Get-WpbdApplications $f.Samples $stats.All $f.Metadata | Out-Null
+                $stats.All[0].AttributionCategory | Should Be 'Windows system process'
+                foreach($row in $f.Metadata) { $row.Path="C:\ThirdParty\$name.exe" }
+                Get-WpbdApplications $f.Samples $stats.All $f.Metadata | Out-Null
+                $stats.All[0].AttributionCategory | Should Be 'Identified application'
+            }
+        }
+        It 'records CIM lookup failure independently from process image access' {
+            Mock Get-CimInstance { throw [UnauthorizedAccessException]::new('Access is denied') }
+            $status=$null; $errors=[ordered]@{}
+            Get-WpbdCim Win32_Service $errors -Status ([ref]$status) | Out-Null
+            $status | Should Be 'AccessDenied'
+            Mock Get-CimInstance { throw [Exception]::new('Provider unavailable') }
+            Get-WpbdCim Win32_Service $errors -Status ([ref]$status) | Out-Null
+            $status | Should Be 'Unavailable'
+        }
+        It 'keeps collecting metadata when an individual image lookup throws' {
+            Mock Initialize-WpbdImageQuery {}
+            Mock Get-WpbdImageEvidence { throw 'Process vanished during native enrichment' }
+            Mock Get-WpbdCim {
+                param($Class)
+                if($Class -eq 'Win32_Service') { [pscustomobject]@{ProcessId=55;Name='ServiceA'} }
+                else { [pscustomobject]@{ProcessId=55;Name='agent.exe';CreationDate=[datetime]::UtcNow.AddMinutes(-1);ParentProcessId=0} }
+            }
+            $timing=$null
+            $rows=@(Get-WpbdProcessMetadata ([ordered]@{}) -Phase Before -Timing ([ref]$timing))
+            $rows.Count | Should Be 1
+            $rows[0].PathStatus | Should Be 'LookupUnavailable'
+            $rows[0].Services[0] | Should Be 'ServiceA'
+            $timing.ImageLookups | Should Be 1
+        }
+        It 'bounds enrichment work and still returns skipped process rows' {
+            Mock Initialize-WpbdImageQuery { Start-Sleep -Milliseconds 2100 }
+            Mock Get-WpbdImageEvidence { throw 'Must not be called after the budget' }
+            Mock Get-WpbdCim {
+                param($Class)
+                if($Class -eq 'Win32_Process') { [pscustomobject]@{ProcessId=55;Name='agent.exe';CreationDate=[datetime]::UtcNow.AddMinutes(-1);ParentProcessId=0} }
+            }
+            $timing=$null
+            $rows=@(Get-WpbdProcessMetadata ([ordered]@{}) -Timing ([ref]$timing))
+            $rows.Count | Should Be 1
+            $rows[0].PathStatus | Should Be 'LookupBudgetExceeded'
+            $timing.ImageLookups | Should Be 0
+            Assert-MockCalled Get-WpbdImageEvidence -Times 0 -Exactly -Scope It
+        }
+    }
+}
+
 Describe 'WPBD diagnostic engine' {
     BeforeAll {
         $script:entry = Join-Path (Split-Path $PSScriptRoot -Parent) 'Start-WPBD.ps1'
