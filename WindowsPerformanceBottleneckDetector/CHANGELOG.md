@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 — 2026-11-19
+
+- Added deterministic, evidence-linked diagnostic insights after the existing PowerShell analysis, without changing collection or bottleneck thresholds.
+- Added aligned CPU/memory application and unresolved-process candidates, conservative priorities, logical-processor context and bounded overlapping-resource context.
+- Added expandable Diagnostic Insights in Findings and offline HTML using the same recorded content; corrected the stale HTML version header.
+- Retained schema 0.3 with additive optional insights, release/engine versions and post-processing timing; historical reports remain readable without invented evidence.
+- Added synthetic insight, attribution, priority, compatibility and report-consistency regressions; updated the self-contained x64 installer to 0.6.0 with its existing AppId.
+
+
 ## 0.5.1
 
 - Retained provisional identities while allowing conservative metadata matches through matching before/after PID, name and CIM creation evidence.

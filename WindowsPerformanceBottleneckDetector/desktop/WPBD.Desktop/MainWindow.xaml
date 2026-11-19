@@ -193,6 +193,24 @@
                                 </ItemsControl>
                             </StackPanel>
                         </Border>
+                        <TextBlock Text="Diagnostic Insights" Style="{StaticResource Heading}" Margin="0,8,0,5"/>
+                        <TextBlock Text="Priority: investigation usefulness and urgency. Severity: observed condition. Confidence: evidence strength." Style="{StaticResource MutedText}" Margin="0,0,0,8"/>
+                        <ItemsControl ItemsSource="{Binding Insights}">
+                            <ItemsControl.ItemTemplate><DataTemplate>
+                                <Border Style="{StaticResource PanelSurface}" Margin="0,0,0,8"><StackPanel>
+                                    <TextBlock Text="{Binding Title}" Style="{StaticResource Heading}"/>
+                                    <WrapPanel>
+                                        <TextBlock Text="{Binding Priority, StringFormat='Priority: {0}   '}"/>
+                                        <TextBlock Text="{Binding Severity, StringFormat='Severity: {0}   '}"/>
+                                        <TextBlock Text="{Binding Confidence, StringFormat='Confidence: {0}'}"/>
+                                    </WrapPanel>
+                                    <TextBlock Text="{Binding Observation}" TextWrapping="Wrap" Margin="0,5,0,5"/>
+                                    <Expander Header="Evidence, contributors and next steps">
+                                        <TextBlock Text="{Binding DetailText}" TextWrapping="Wrap" Margin="5"/>
+                                    </Expander>
+                                </StackPanel></Border>
+                            </DataTemplate></ItemsControl.ItemTemplate>
+                        </ItemsControl>
                         <ItemsControl ItemsSource="{Binding Findings}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>

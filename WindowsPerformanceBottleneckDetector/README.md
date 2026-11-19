@@ -1,10 +1,10 @@
 # Windows Performance Bottleneck Detector
 
-WPBD 0.5.1 packages the Windows desktop app as a single installer and reports process identity and attribution quality. WPBD samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. The read-only engine runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. It requires no agent, external PowerShell module or internet connection.
+WPBD 0.6.0 adds evidence-based troubleshooting insights to the Windows desktop app and offline reports, alongside process identity and attribution quality. WPBD samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. The read-only engine runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. It requires no agent, external PowerShell module or internet connection.
 
 ## Install WPBD
 
-Copy `WPBD-Setup-0.5.1-x64.exe` to a compatible workstation and double-click it. Setup installs the app for the current user under `%LOCALAPPDATA%\Programs\WPBD`, adds a Start menu shortcut and offers an optional desktop shortcut. Select **Launch Windows Performance Bottleneck Detector** at the end of Setup, or open WPBD from Start.
+Copy `WPBD-Setup-0.6.0-x64.exe` to a compatible workstation and double-click it. Setup installs the app for the current user under `%LOCALAPPDATA%\Programs\WPBD`, adds a Start menu shortcut and offers an optional desktop shortcut. Select **Launch Windows Performance Bottleneck Detector** at the end of Setup, or open WPBD from Start.
 
 The installer bundles the self-contained .NET 10 desktop runtime and diagnostic scripts. The target needs native x64 Windows 11 or a Windows 10 edition supported by .NET 10, Windows PowerShell 5.1, and write access to the user's local application data. Setup works offline and runs with current-user permissions. Your organisation's application-control and script policies still apply. [Microsoft .NET Windows support](https://learn.microsoft.com/dotnet/core/install/windows#supported-versions)
 
@@ -15,7 +15,7 @@ To remove WPBD, close it and select **Uninstall** in Windows **Settings > Apps >
 The unsigned installer may trigger a Microsoft Defender SmartScreen warning. Verify it against the SHA-256 published by your distributor and follow your organisation's approval process. With the setup file and its checksum file in the current folder, a technician can verify the bytes with:
 
 ```powershell
-$name = 'WPBD-Setup-0.5.1-x64.exe'
+$name = 'WPBD-Setup-0.6.0-x64.exe'
 $expected = ((Get-Content -LiteralPath ".\$name.sha256" -Raw).Trim() -split '\s+', 2)[0]
 $actual = (Get-FileHash -LiteralPath ".\$name" -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw 'Installer SHA-256 mismatch.' }
@@ -35,7 +35,7 @@ Use `-ISCCPath 'C:\path\to\ISCC.exe'` if the compiler is in a custom location. T
 For production signing, use an organisation-issued Authenticode code-signing certificate and the Windows SDK SignTool. Sign the finished installer and regenerate its checksum from the signed bytes. Use the organisation's certificate thumbprint and RFC 3161 timestamp service. [Microsoft SignTool reference](https://learn.microsoft.com/windows/win32/seccrypto/signtool)
 
 ```powershell
-$setup = '.\installer\artifacts\WPBD-Setup-0.5.1-x64.exe'
+$setup = '.\installer\artifacts\WPBD-Setup-0.6.0-x64.exe'
 signtool sign /sha1 'CERTIFICATE_THUMBPRINT' /fd SHA256 /tr 'RFC3161_TIMESTAMP_URL' /td SHA256 $setup
 if ($LASTEXITCODE -ne 0) { throw 'Installer signing failed.' }
 signtool verify /pa $setup
@@ -43,6 +43,31 @@ if ($LASTEXITCODE -ne 0) { throw 'Installer signature verification failed.' }
 $hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
 "$hash  $(Split-Path -Leaf $setup)" | Set-Content -LiteralPath "$setup.sha256" -Encoding Ascii
 ```
+
+## Diagnostic intelligence in 0.6.0
+
+The Findings tab and offline HTML include **Diagnostic Insights**, ordered by investigation priority. Expand an insight for recorded evidence, selected sample slots, contributor measurements, next steps and limitations. Existing findings remain the engine's authoritative classifications. No additional collection, system queries, external processing or remediation was added.
+
+`src/Diagnostic-Insights.ps1` runs after the established analysis and attribution. C# only loads and displays the recorded insights; it does not infer new diagnoses. Evidence references address report fields, and slots identify the relevant samples within the recorded UTC window. CPU candidates use only above-threshold total-CPU samples. Memory candidates use samples counted as pressure by the existing memory assessment, or the full observation window for elevated utilisation advisories. Application totals reuse complete, same-sample member sums. Individual process statistics remain separate from group totals. Unknown/restricted accounting groups are never described as applications; their measured processes may appear individually with unresolved ownership.
+
+Candidates must have average CPU at least 5% of whole-machine capacity or a peak at least 10%, or at least 256 MiB peak private allocation in the selected samples. Up to five candidates are ranked by measured average, then name and key. These display filters do not change diagnostic thresholds. Coverage counts describe captured measurements, not a percentage of total system work. Attribution confidence describes ownership and remains separate from resource evidence confidence.
+
+Priority rules are deterministic:
+
+| Priority | Rule |
+| --- | --- |
+| High | Existing Critical severity with High evidence confidence and at least 80% scheduled-sample coverage |
+| Medium | Existing Warning/Critical severity with Medium/High confidence; High is capped here below 80% coverage |
+| Low | Existing Warning/Critical with Low confidence; or supported logical-processor context |
+| Informational | Normal operation, elevated use without established pressure, coverage limitations and cross-resource context |
+
+Severity is the existing finding's condition level; priority is investigation urgency/usefulness. High insight confidence is capped at Medium below 80% valid scheduled samples. Minimum assessable coverage and sustained thresholds still come from the original engine. Large allocations do not increase confidence or establish causation. CPU/memory and CPU/disk context requires shared qualifying sample slots and existing resource findings; it never adds a severe finding or changes the bottleneck classification. Memory/paging context is included in the memory evidence, avoiding a duplicate problem. Low capacity remains distinct from disk I/O latency. Throughput and active time alone cannot trigger I/O pressure.
+
+Normal reports contain one concise normal-operation insight unless the existing engine also produced an advisory or supported logical-processor context. Missing counters remain unavailable. The HTML header now reports recorded application, engine and schema versions separately, with absent historical versions labelled not recorded.
+
+Schema **0.3 is retained**: `DiagnosticInsights`, `ApplicationVersion`, `EngineVersion` and `CollectionTiming.InsightAnalysisSeconds` are additive optional fields. Each insight records `Id`, title/category, priority/severity/confidence, related finding category, observation/interpretation, measurement references, structured supporting evidence, selected slots and UTC window, contributors, investigation steps and limitations. `DetailText` is a derived presentation shared verbatim by WPF and escaped HTML; structured fields remain available to consumers. Old reports without insights retain their original findings and show no invented historical insight. Release and engine versions are 0.6.0; neither is the schema version.
+
+See `DIAGNOSTIC_INTELLIGENCE_REVIEW.md` for validation, timings, controlled examples and limitations.
 
 ## Desktop app
 

@@ -55,6 +55,13 @@ function New-WpbdHtmlFindings {
 
 function ConvertTo-WpbdHtmlReport {
     param($Diagnostic)
+    $insights = @(foreach ($insight in $Diagnostic.DiagnosticInsights) {
+        "<article class='finding'><h3>$(ConvertTo-WpbdHtmlText $insight.Title)</h3><p>Priority: $(ConvertTo-WpbdHtmlText $insight.Priority) &middot; Severity: $(ConvertTo-WpbdHtmlText $insight.Severity) &middot; Confidence: $(ConvertTo-WpbdHtmlText $insight.Confidence)</p><p>$(ConvertTo-WpbdHtmlText $insight.Observation)</p><details><summary>Evidence, contributors and next steps</summary><div style='white-space:pre-wrap;overflow-wrap:anywhere'>$(ConvertTo-WpbdHtmlText $insight.DetailText)</div></details></article>"
+    })
+    $insightsSection = if ($insights.Count) { "<section><h2>Diagnostic Insights</h2><p>Priority is investigation usefulness and urgency; severity describes the observed condition; confidence describes evidence strength.</p>$($insights -join "`n")</section>" }
+    $release = if ($Diagnostic.ApplicationVersion) { ConvertTo-WpbdHtmlText $Diagnostic.ApplicationVersion } else { 'not recorded' }
+    $engine = if ($Diagnostic.EngineVersion) { ConvertTo-WpbdHtmlText $Diagnostic.EngineVersion } else { 'not recorded' }
+    $schema = ConvertTo-WpbdHtmlText $Diagnostic.SchemaVersion
     $system = $Diagnostic.System
     $stats = $Diagnostic.Statistics
     $computer = ConvertTo-WpbdHtmlText $system.ComputerName
@@ -306,13 +313,14 @@ th{background:#e9f1f6} tbody tr:nth-child(even){background:#f5f8fa} summary{curs
 <body>
 <header>
 <h1>Windows Performance Bottleneck Detector</h1>
-<p><strong>$computer</strong> &middot; Version 0.2</p>
+<p><strong>$computer</strong> &middot; Application $release &middot; Engine $engine &middot; Schema $schema</p>
 <p class="meta">$start to $end &middot; $duration s elapsed</p>
 <p class="assessment">$assessment</p>
 <p>$sampleCount of $expected scheduled samples collected &middot; $missed missed</p>
 $repeatGuidance
 </header>
 <main>
+$insightsSection
 <section><h2>Significant findings</h2>$($findings -join "`n")</section>
 <section><h2>Advisories</h2>$($advisories -join "`n")</section>
 $evidenceSection

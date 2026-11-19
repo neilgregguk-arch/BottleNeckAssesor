@@ -436,7 +436,8 @@ function Get-WpbdAnalysis {
     if ($memory.Advisory) { $advisories = @($memory.Advisory) }
     $sampling = Get-WpbdSamplingSummary $Metrics $samples $expected $cpu $memory.Statistics
     $sampling.Timing | Add-Member -NotePropertyName AttributionAnalysisSeconds -NotePropertyValue $attributionWatch.Elapsed.TotalSeconds
-    [pscustomobject]@{
+    $diagnostic = [pscustomobject]@{
+        ApplicationVersion = '0.6.0'; EngineVersion = '0.6.0'
         SchemaVersion = '0.3'
         Configuration = $Metrics.Configuration; Thresholds = [pscustomobject] $thresholds; System = $Metrics.System
         StartedUtc = $Metrics.StartedUtc; CompletedUtc = $Metrics.CompletedUtc
@@ -456,4 +457,12 @@ function Get-WpbdAnalysis {
         }
         Findings = $findings.ToArray()
     }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $priorityOrder = @{ High=0; Medium=1; Low=2; Informational=3 }
+    $insights = @(Get-WpbdDiagnosticInsights $diagnostic | Sort-Object @{Expression={$priorityOrder[$_.Priority]}}, Id)
+    $watch.Stop()
+    $diagnostic | Add-Member -NotePropertyName DiagnosticInsights -NotePropertyValue $insights
+    $diagnostic.CollectionTiming | Add-Member -NotePropertyName InsightAnalysisSeconds -NotePropertyValue $watch.Elapsed.TotalSeconds
+    $diagnostic
+
 }

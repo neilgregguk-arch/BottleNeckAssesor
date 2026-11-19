@@ -106,6 +106,7 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     public string ReportContext => _report is { } report
         ? $"{report.Computer} · {report.Started.ToLocalTime():g} · schema {report.Schema}"
         : "Findings and process rankings are available after collection or when you open a saved report.";
+    public IReadOnlyList<DiagnosticInsight> Insights => _report?.Insights ?? [];
     public IReadOnlyList<Finding> Findings => _report?.Findings ?? [];
     private string _processSearch = "";
     private string _processFilter = "All captured";

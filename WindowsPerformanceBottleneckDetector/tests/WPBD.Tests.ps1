@@ -623,6 +623,201 @@ Describe 'WPBD diagnostic engine' {
         }
     }
 
+    Context '0.6 deterministic diagnostic intelligence' {
+        It 'ranks measured CPU contributors and excludes cumulative historical CPU from evidence' {
+            $m=New-TestMetrics -Cpu
+            $r=Get-WpbdAnalysis $m
+            $i=$r.DiagnosticInsights | Where-Object Id -eq 'cpu.sustained'
+            $i.SampleSlots.Count | Should Be 5
+            $i.PotentialContributors[0].Usage.Average | Should Be 9.375
+            $i.PotentialContributors[0].Usage.Maximum | Should Be 15.625
+            $i.SupportingEvidence.PSObject.Properties.Name -contains 'LeadingProcesses' | Should Be $false
+        }
+        It 'links sustained CPU to a verified application using executable evidence' {
+            $m=New-TestMetrics -Cpu
+            $m | Add-Member ProcessMetadata @([pscustomobject]@{
+                Id=42; Identity=("42/" + ([DateTimeOffset]'2025-01-02T10:00:00Z').UtcTicks)
+                StartUtc='2025-01-02T10:00:00Z'; Path='C:\Apps\worker.exe'
+            })
+            $i=(Get-WpbdAnalysis $m).DiagnosticInsights | Where-Object Id -eq 'cpu.sustained'
+            $c=$i.PotentialContributors[0]
+            $c.ApplicationKey | Should Not BeNullOrEmpty
+            $c.AttributionConfidence | Should Be 'High'
+            $c.ProcessIdentities[0].Usage.Average | Should Be 9.375
+            $c.ProcessIdentities[0].Usage.Maximum | Should Be 15.625
+            $c.MeasurementCoverage.ValidSamples | Should Be 5
+        }
+        It 'caps critical investigation priority on incomplete scheduled evidence' {
+            $m=New-TestMetrics -Paging; $m.Configuration.ExpectedSamples=8
+            $i=(Get-WpbdAnalysis $m).DiagnosticInsights | Where-Object Id -eq 'memory.pressure'
+            $i.Severity | Should Be 'Critical'
+            $i.Priority | Should Be 'Medium'
+            $i.Confidence | Should Be 'Medium'
+        }
+        It 'keeps high CPU without process observations and explains missing attribution' {
+            $m=New-TestMetrics -Cpu; foreach($s in $m.Samples){$s.Processes=@()}
+            $i=(Get-WpbdAnalysis $m).DiagnosticInsights | Where-Object Id -eq 'cpu.sustained'
+            $i.PotentialContributors.Count | Should Be 0
+            ($i.DataLimitations -join ' ') | Should Match 'No reliably attributed'
+            $i.Severity | Should Be 'Warning'
+        }
+        It 'uses only CPU threshold samples for contributor averages' {
+            $m=New-TestMetrics -Cpu
+            $m.Samples[3].CpuTotalPercent=10; $m.Samples[4].CpuTotalPercent=10
+            $m.Samples[4].Processes[0].CpuPercent=99
+            $i=(Get-WpbdAnalysis $m).DiagnosticInsights | Where-Object Id -eq 'cpu.sustained'
+            $i.PotentialContributors[0].Usage.Average | Should Be 6.25
+            $i.PotentialContributors[0].Usage.Maximum | Should Be 9.375
+        }
+        It 'distinguishes a logical processor from total CPU saturation' {
+            $m=New-TestMetrics
+            foreach($s in $m.Samples){$s.LogicalProcessors=@([pscustomobject]@{Name='0,0';Percent=95})}
+            $r=Get-WpbdAnalysis $m
+            @($r.DiagnosticInsights | Where-Object Id -eq 'cpu.logical/0,0').Count | Should Be 1
+            @($r.Findings | Where-Object Category -eq 'CPU bottleneck').Count | Should Be 0
+        }
+        It 'preserves corroborated severe memory pressure and all memory measurements' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Paging)
+            $i=$r.DiagnosticInsights | Where-Object Id -eq 'memory.pressure'
+            $i.Title | Should Be 'Severe memory pressure'
+            $i.Priority | Should Be 'High'
+            $i.SupportingEvidence.PressureWithPagingSamples | Should Be 5
+            $i.SupportingEvidence.AvailableBytes.Minimum | Should Be 256MB
+            $i.SampleSlots.Count | Should Be 5
+            ($i.DataLimitations -join ' ') | Should Match 'not physical RAM'
+        }
+        It 'keeps potential memory pressure distinct from severe pressure' {
+            $m=New-TestMetrics; Set-TestMemory $m 8GB 700MB 40 60
+            $i=(Get-WpbdAnalysis $m).DiagnosticInsights | Where-Object Id -eq 'memory.pressure'
+            $i.Title | Should Be 'Potential memory pressure'
+            $i.Priority | Should Be 'Medium'
+        }
+        It 'does not promote elevated memory without corroboration to pressure' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -HighMemory)
+            @($r.DiagnosticInsights | Where-Object Id -eq 'memory.pressure').Count | Should Be 0
+            ($r.DiagnosticInsights | Where-Object Id -eq 'memory.elevated').Priority | Should Be 'Informational'
+        }
+        It 'does not warn for seventy percent physical use and several GiB headroom' {
+            $m=New-TestMetrics; Set-TestMemory $m 16GB (4.8GB)
+            $r=Get-WpbdAnalysis $m
+            $r.MemoryAssessment.Category | Should Be 'Normal memory operation'
+            @($r.DiagnosticInsights | Where-Object Category -match 'Memory').Count | Should Be 0
+        }
+        It 'does not turn large private allocations into a healthy-system bottleneck' {
+            $m=New-TestMetrics; foreach($s in $m.Samples){$s.Processes[0].PrivateBytes=20GB}
+            $r=Get-WpbdAnalysis $m
+            $r.Assessment.Category | Should Be 'No clear bottleneck detected'
+            $r.DiagnosticInsights.Count | Should Be 1
+            $r.DiagnosticInsights[0].Priority | Should Be 'Informational'
+        }
+        It 'requires latency and meaningful workload and disclaims disk application ownership' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Disk)
+            $i=$r.DiagnosticInsights | Where-Object Id -eq 'disk.io/0 C:'
+            $i.SampleSlots.Count | Should Be 5
+            $i.SupportingEvidence.ReadsPerSecond.Average | Should Be 10
+            $i.PotentialContributors.Count | Should Be 0
+            ($i.DataLimitations -join ' ') | Should Match 'cannot reliably identify'
+        }
+        It 'does not treat throughput or active time as a disk bottleneck' {
+            $m=New-TestMetrics -DiskBusy; foreach($s in $m.Samples){$s.Disks[0].ReadBytesPerSecond=1GB}
+            @((Get-WpbdAnalysis $m).DiagnosticInsights | Where-Object Id -like 'disk.io/*').Count | Should Be 0
+        }
+        It 'distinguishes low capacity from I/O pressure with no fabricated timed slots' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -LowSpace)
+            $i=$r.DiagnosticInsights | Where-Object Id -eq 'storage.capacity/C:'
+            $i.SampleSlots.Count | Should Be 0
+            @($r.DiagnosticInsights | Where-Object Id -like 'disk.io/*').Count | Should Be 0
+        }
+        It 'adds bounded context to simultaneous CPU and memory findings' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Cpu -Paging)
+            $i=$r.DiagnosticInsights | Where-Object Id -eq 'context.cpu-memory'
+            $i.SampleSlots.Count | Should Be 5
+            $i.Priority | Should Be 'Informational'
+            $i.Interpretation | Should Match 'does not establish causation'
+        }
+        It 'reports CPU and disk overlap only when actual sample slots overlap' {
+            $m=New-TestMetrics -Cpu -Disk
+            $r=Get-WpbdAnalysis $m
+            ($r.DiagnosticInsights | Where-Object Id -eq 'context.cpu-disk/0 C:').SampleSlots.Count | Should Be 5
+            foreach($s in $m.Samples){$s.CpuTotalPercent=0}
+            @((Get-WpbdAnalysis $m).DiagnosticInsights | Where-Object Id -like 'context.cpu-disk/*').Count | Should Be 0
+        }
+        It 'never describes missing CPU as normal and preserves nulls' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Incomplete)
+            @($r.DiagnosticInsights | Where-Object Id -eq 'operation.normal').Count | Should Be 0
+            $r.Statistics.Cpu.Average | Should BeNullOrEmpty
+            ($r.DiagnosticInsights | Where-Object Id -eq 'quality.insufficient').Confidence | Should Be 'Low'
+        }
+        It 'retains unresolved process identities without assigning an application' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Cpu)
+            $c=($r.DiagnosticInsights | Where-Object Id -eq 'cpu.sustained').PotentialContributors[0]
+            $c.ApplicationKey | Should BeNullOrEmpty
+            $c.Name | Should Match 'ownership unresolved'
+            $c.ProcessIdentities.Count | Should Be 1
+        }
+        It 'keeps restricted attribution separate from resource confidence' {
+            $m=New-TestMetrics -Cpu
+            foreach($s in $m.Samples){$s.Processes[0] | Add-Member MetadataAccess Restricted}
+            $r=Get-WpbdAnalysis $m
+            $i=$r.DiagnosticInsights | Where-Object Id -eq 'cpu.sustained'
+            $i.Confidence | Should Be 'High'
+            $i.PotentialContributors[0].AttributionConfidence | Should Be 'Low'
+            $i.PotentialContributors[0].ApplicationKey | Should BeNullOrEmpty
+        }
+        It 'caps high confidence when scheduled sampling is incomplete' {
+            $m=New-TestMetrics -Cpu; $m.Configuration.ExpectedSamples=8
+            $i=(Get-WpbdAnalysis $m).DiagnosticInsights | Where-Object Id -eq 'cpu.sustained'
+            $i.Confidence | Should Be 'Medium'
+            ($i.DataLimitations -join ' ') | Should Match 'Partial coverage'
+        }
+        It 'keeps normal operation concise and acknowledges intermittent symptoms' {
+            $r=Get-WpbdAnalysis (New-TestMetrics)
+            $r.DiagnosticInsights.Count | Should Be 1
+            $r.DiagnosticInsights[0].SuggestedInvestigation.Count | Should Be 1
+            ($r.DiagnosticInsights[0].DataLimitations -join ' ') | Should Match 'intermittent'
+        }
+        It 'uses same-sample application totals rather than sums of process peaks' {
+            $m=New-TestMetrics -Paging
+            foreach($s in $m.Samples){
+                $s.Processes=@(
+                    [pscustomobject]@{Id=41;Name='app';StartUtc='2025-01-02T10:00:00Z';Path='C:\Apps\app.exe';PrivateBytes=$(if($s.Slot -eq 1){800MB}else{300MB});WorkingSetBytes=200MB},
+                    [pscustomobject]@{Id=42;Name='app';StartUtc='2025-01-02T10:00:01Z';Path='C:\Apps\app.exe';PrivateBytes=$(if($s.Slot -eq 2){800MB}else{300MB});WorkingSetBytes=200MB})
+            }
+            $m | Add-Member ProcessMetadata @(
+                [pscustomobject]@{Id=41;Identity=("41/" + ([DateTimeOffset]'2025-01-02T10:00:00Z').UtcTicks);StartUtc='2025-01-02T10:00:00Z';Path='C:\Apps\app.exe'},
+                [pscustomobject]@{Id=42;Identity=("42/" + ([DateTimeOffset]'2025-01-02T10:00:01Z').UtcTicks);StartUtc='2025-01-02T10:00:01Z';Path='C:\Apps\app.exe'})
+            $c=((Get-WpbdAnalysis $m).DiagnosticInsights | Where-Object Id -eq 'memory.pressure').PotentialContributors[0]
+            $c.Usage.Maximum | Should Be 1100MB
+            $c.ProcessIdentities.Count | Should Be 2
+        }
+        It 'renders exactly the recorded insight text and escapes HTML' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Cpu -Paging -Disk)
+            $paths=Export-WpbdReport $r $TestDrive
+            $j=Get-Content $paths.JsonPath -Raw | ConvertFrom-Json
+            $h=Get-Content $paths.HtmlPath -Raw
+            foreach($i in $j.DiagnosticInsights){
+                $h.Contains([Net.WebUtility]::HtmlEncode($i.DetailText)) | Should Be $true
+                $h.Contains([Net.WebUtility]::HtmlEncode($i.Title)) | Should Be $true
+            }
+            $h | Should Match 'Application 0.6.0'
+            $h | Should Not Match 'Version 0.2|worker<script>'
+        }
+        It 'does not invent historical insights when exporting an older report' {
+            $r=Get-WpbdAnalysis (New-TestMetrics)
+            $r.PSObject.Properties.Remove('DiagnosticInsights'); $r.PSObject.Properties.Remove('ApplicationVersion'); $r.PSObject.Properties.Remove('EngineVersion')
+            $paths=Export-WpbdReport $r $TestDrive
+            $h=Get-Content $paths.HtmlPath -Raw
+            $h | Should Not Match '<h2>Diagnostic Insights</h2>'
+            $h | Should Match 'Application not recorded'
+        }
+        It 'assigns stable IDs and reproducible insight payloads' {
+            $m=New-TestMetrics -Cpu -Paging -Disk -LowSpace
+            $a=(Get-WpbdAnalysis $m).DiagnosticInsights | ConvertTo-Json -Depth 16
+            $b=(Get-WpbdAnalysis $m).DiagnosticInsights | ConvertTo-Json -Depth 16
+            $a | Should Be $b
+        }
+    }
+
     Context 'report export' {
         It 'round-trips report structure and preserves nulls, zero values and sample arrays' {
             $metrics = New-TestMetrics -Incomplete

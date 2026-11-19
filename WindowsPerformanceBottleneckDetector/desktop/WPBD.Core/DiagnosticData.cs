@@ -55,10 +55,13 @@ public sealed record AttributionQuality(int UniqueIdentities, int UniquePids, in
 public sealed record SamplingQuality(int Expected, int Actual, int ValidCpu, int Missed, double DurationSeconds,
     IReadOnlyList<string> Errors, double? AverageWorkSeconds, double? PeakWorkSeconds);
 
+public sealed record DiagnosticInsight(string Id, string Title, string Category, string Priority, string Severity,
+    string Confidence, string Observation, string DetailText, JsonElement Evidence);
+
 public sealed record DiagnosticReport(string Schema, string Computer, DateTimeOffset Started, string Assessment,
     bool Incomplete, IReadOnlyList<string> CoverageGaps, IReadOnlyList<Sample> Samples, IReadOnlyList<Finding> Findings,
     IReadOnlyList<ProcessReading> Processes, SamplingQuality Quality, string JsonPath, string? HtmlPath,
-    IReadOnlyList<ApplicationReading>? Applications = null, AttributionQuality? Attribution = null);
+    IReadOnlyList<ApplicationReading>? Applications = null, AttributionQuality? Attribution = null, IReadOnlyList<DiagnosticInsight>? Insights = null);
 
 public sealed record EngineProgress(string Phase, Sample? Sample = null, int Collected = 0, int Expected = 0);
 
@@ -105,7 +108,11 @@ public static class DiagnosticData
             Timestamp(root, "StartedUtc"), RequiredText(assessment, "Summary"),
             category == "Insufficient diagnostic data" || gaps.Length > 0 || actual == 0, gaps, samples, findings,
             ParseAllProcesses(root), settings, path,
-            File.Exists(html) ? html : null, ParseApplications(root), ParseAttribution(root));
+            File.Exists(html) ? html : null, ParseApplications(root), ParseAttribution(root),
+            root.Field("DiagnosticInsights").Items().Select(item => new DiagnosticInsight(
+                RequiredText(item, "Id"), RequiredText(item, "Title"), RequiredText(item, "Category"),
+                RequiredText(item, "Priority"), RequiredText(item, "Severity"), RequiredText(item, "Confidence"),
+                RequiredText(item, "Observation"), RequiredText(item, "DetailText"), item.Clone())).ToArray());
     }
 
     public static EngineEvent ParseEvent(string line)

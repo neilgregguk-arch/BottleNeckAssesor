@@ -7,6 +7,27 @@ var temporary = Directory.CreateTempSubdirectory("wpbd-tests-").FullName;
 var valid = Path.Combine(temporary, "WPBD-test.json");
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("0.6 insights preserve structured evidence, nulls and historical absence", async () =>
+    {
+        var document = JsonNode.Parse(Fixture("0.3"))!;
+        document["DiagnosticInsights"] = new JsonArray(new JsonObject {
+            ["Id"] = "cpu.sustained", ["Title"] = "Sustained CPU", ["Category"] = "CPU bottleneck",
+            ["Priority"] = "Medium", ["Severity"] = "Warning", ["Confidence"] = "High",
+            ["Observation"] = "3 of 5 samples", ["DetailText"] = "Recorded details <escaped>",
+            ["PotentialContributors"] = new JsonArray(), ["SupportingEvidence"] = new JsonObject { ["Missing"] = null },
+            ["SampleSlots"] = new JsonArray(1, 2, 3), ["MeasurementReferences"] = new JsonArray("Statistics.Cpu") });
+        await File.WriteAllTextAsync(valid, document.ToJsonString());
+        var report = await DiagnosticData.LoadAsync(valid);
+        var insight = report.Insights!.Single();
+        Check(insight is { Id: "cpu.sustained", Priority: "Medium", Severity: "Warning", Confidence: "High",
+            DetailText: "Recorded details <escaped>" }, "Insight presentation changed.");
+        Check(insight.Evidence.GetProperty("SupportingEvidence").GetProperty("Missing").ValueKind == JsonValueKind.Null &&
+            insight.Evidence.GetProperty("SampleSlots").GetArrayLength() == 3, "Structured evidence did not survive document disposal.");
+        foreach (var schema in new[] { "0.1", "0.2", "0.3" }) {
+            await File.WriteAllTextAsync(valid, Fixture(schema));
+            Check((await DiagnosticData.LoadAsync(valid)).Insights!.Count == 0, "Historical insights were invented.");
+        }
+    }),
     ("0.5.1 optional attribution evidence and service-only coverage round trip", async () =>
     {
         var document = JsonNode.Parse(Fixture("0.3"))!;
@@ -224,6 +245,13 @@ static async Task LiveAsync(string engine, string directory, bool overridePolicy
         report.Processes.Select(process => process.InstanceKey).Distinct().Count() == report.Processes.Count &&
         report.Applications!.Sum(application => application.Processes.Count) == report.Processes.Count,
         "Live process identity or application membership counts were inconsistent.");
+    Check(report.Insights is { Count: > 0 }, "Live report omitted diagnostic insights.");
+    using (var written = JsonDocument.Parse(await File.ReadAllTextAsync(report.JsonPath))) {
+        var html = await File.ReadAllTextAsync(report.HtmlPath!);
+        foreach (var insight in report.Insights!)
+            Check(html.Contains(System.Net.WebUtility.HtmlEncode(insight.DetailText)), "Live HTML and desktop insight text differ.");
+        Console.WriteLine($"LIVE timing: sample average {written.RootElement.GetProperty("CollectionTiming").GetProperty("SampleWorkSeconds").GetProperty("Average")}; insight seconds {written.RootElement.GetProperty("CollectionTiming").GetProperty("InsightAnalysisSeconds")}");
+    }
     Console.WriteLine($"PASS real Windows collection and paired reports ({report.Quality.Actual}/{report.Quality.Expected} samples)");
 
     using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(30));

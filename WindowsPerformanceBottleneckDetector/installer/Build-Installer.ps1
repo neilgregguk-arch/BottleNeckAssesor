@@ -70,7 +70,7 @@ try {
         'WPBD.Desktop.exe', 'WPBD.Desktop.dll', 'WPBD.Desktop.deps.json', 'WPBD.Desktop.runtimeconfig.json', 'WPBD.Core.dll',
         'coreclr.dll', 'hostfxr.dll', 'hostpolicy.dll', 'PresentationFramework.dll', 'wpfgfx_cor3.dll',
         'Engine/Invoke-WpbdDesktop.ps1', 'Engine/src/WPBD.psm1', 'Engine/src/Collect-Metrics.ps1',
-        'Engine/src/Analyse-Metrics.ps1', 'Engine/src/Export-Report.ps1', 'Engine/src/Process-Applications.ps1'
+        'Engine/src/Diagnostic-Insights.ps1', 'Engine/src/Analyse-Metrics.ps1', 'Engine/src/Export-Report.ps1', 'Engine/src/Process-Applications.ps1'
     )
     foreach ($file in $required) {
         if (-not (Test-Path -LiteralPath (Join-Path $publish $file) -PathType Leaf)) { throw "Publish output is missing $file." }
