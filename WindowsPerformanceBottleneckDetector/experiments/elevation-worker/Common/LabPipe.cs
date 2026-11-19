@@ -70,24 +70,7 @@ internal static class LabPipe
         {
             var bytes = new byte[Native.GetSecurityDescriptorLength(descriptor)];
             Marshal.Copy(descriptor, bytes, 0, bytes.Length);
-            var sd = new RawSecurityDescriptor(bytes, 0);
-            if (sd.Owner?.Value != owner.User || sd.DiscretionaryAcl?.Count != 3 || sd.SystemAcl?.Count != 1)
-                throw new InvalidDataException("Unexpected native descriptor structure.");
-            var expected = new Dictionary<string, int> { ["S-1-5-18"] = 0x1f01ff, ["S-1-5-32-544"] = 0x1f01ff, [owner.Logon] = (int)Native.ReadRights };
-            foreach (GenericAce item in sd.DiscretionaryAcl)
-            {
-                if (item is not CommonAce ace || ace.AceQualifier != AceQualifier.AccessAllowed || ace.AceFlags != AceFlags.None ||
-                    !expected.Remove(ace.SecurityIdentifier.Value, out var mask) || ace.AccessMask != mask)
-                    throw new InvalidDataException("Unexpected effective DACL.");
-            }
-            // RawAcl exposes a mandatory-label ACE as CustomAce, not KnownAce.
-            // Parse its documented ACE_HEADER + ACCESS_MASK + SID binary layout.
-            var label = sd.SystemAcl[0];
-            var labelBytes = new byte[label.BinaryLength]; label.GetBinaryForm(labelBytes, 0);
-            if ((byte)label.AceType != 17 || label.AceFlags != AceFlags.None || labelBytes.Length != 20 ||
-                BinaryPrimitives.ReadUInt32LittleEndian(labelBytes.AsSpan(4, 4)) != 1 ||
-                new System.Security.Principal.SecurityIdentifier(labelBytes, 8).Value != "S-1-16-8192")
-                throw new InvalidDataException("Unexpected native mandatory label.");
+            EndpointDescriptor.ValidateMediumLab(bytes, owner.User, owner.Logon);
         }
         finally { Native.LocalFree(descriptor); }
     }

@@ -1,5 +1,11 @@
 # Windows Performance Bottleneck Detector
 
+## 0.6.5 experimental milestone — partial implementation/validation (B)
+
+Added [environment readiness](docs/security/0_6_5_ENVIRONMENT_READINESS.md), uncompiled [native token/refusal source](experiments/elevation-worker/native/README.md), a redacted own-token readiness probe, stricter shared descriptor validation and [independent review/install/removal preparation](docs/security/0_6_5_INDEPENDENT_REVIEW_BRIEF.md). The environment gate remains closed: no approved disposable administrator lab, native toolchain or signing authority was established. Work was limited to non-privileged source, inspection and tests; no tools/accounts/VM/policies were installed or configured.
+
+Native compilation, protected deployment, working elevated TokenProbeV1, genuine UAC, High/cross-account IPC and protected removal are **not validated**. Descriptor tests validate content only. Production remains **0.6.2 Standard-only** with unchanged engine, rejection gate and installer. See [the 0.6.5 report](docs/security/MILESTONE_0_6_5_REPORT.md) for exact evidence and open gates.
+
 ## 0.6.4 experimental milestone — partial proof of concept (B)
 
 The isolated [worker experiment](experiments/elevation-worker/README.md) adds native Windows token/process observations, real **Medium-to-Medium** named-pipe tests using the unchanged 0.6.3 protocol validator, and fail-closed relay/worker refusal entry points. It does not implement a working elevated token probe, protected package or UAC launch. Native build tooling and a disposable multi-account administrator lab remain prerequisites; protected installation/removal, High endpoint ownership and authenticated cross-account communication are unvalidated blockers.

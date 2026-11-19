@@ -2,10 +2,14 @@
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
-    foreach ($project in @('TransportLab', 'Worker', 'Relay')) {
+    foreach ($project in @('TransportLab', 'Worker', 'Relay', 'Readiness', 'PolicyTests')) {
         & dotnet build "$project/$project.csproj" -c Release --nologo
         if ($LASTEXITCODE -ne 0) { throw "Experimental $project build failed." }
     }
+    & ./Readiness/bin/Release/net10.0-windows/Readiness.exe --inspect
+    if ($LASTEXITCODE -ne 0) { throw 'Non-elevated readiness inspection failed.' }
+    & ./PolicyTests/bin/Release/net10.0-windows/PolicyTests.exe --self-test
+    if ($LASTEXITCODE -ne 0) { throw 'Descriptor policy tests failed.' }
     # The native primary-token guard must pass before starting any refusal fixture.
     & ./TransportLab/bin/Release/net10.0-windows/TransportLab.exe --self-test
     if ($LASTEXITCODE -ne 0) { throw 'Medium Windows transport tests failed.' }

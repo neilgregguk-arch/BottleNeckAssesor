@@ -63,6 +63,7 @@ internal sealed class Peer : IDisposable
     internal long Start { get; }
     internal uint Session { get; }
     internal bool Elevated { get; }
+    internal bool AdminPresent { get; }
     internal bool AdminEnabled { get; }
     internal int Integrity { get; }
     // Identities stay in memory and must never be included in logs/results/fixtures.
@@ -102,6 +103,7 @@ internal sealed class Peer : IDisposable
                     return items;
                 });
                 Logon = groups.Single(g => (g.Attributes & 0xc0000000) == 0xc0000000).Sid;
+                AdminPresent = groups.Any(g => g.Sid == "S-1-5-32-544");
                 AdminEnabled = groups.Any(g => g.Sid == "S-1-5-32-544" && (g.Attributes & 4) != 0 && (g.Attributes & 0x10) == 0);
             }
             var path = new System.Text.StringBuilder(32768); uint length = 32768;

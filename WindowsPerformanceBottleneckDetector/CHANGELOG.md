@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.5 — 2026-11-19 — Experimental partial implementation/validation (B)
+
+- Rechecked environment prerequisites and recorded a closed privileged environment gate; no tool/account/VM/policy installation or privileged experiment performed.
+- Added uncompiled C++ own-primary-token/refusal source and canonical parser/CMake review settings. Native assertions/build, successful protected operation and UAC path remain unimplemented or unvalidated.
+- Added redacted readiness inspection and shared strict owner/DACL/label validation used by real Medium pipe read-back, with 21 descriptor-content policy checks. Preserved the unchanged wire validator and existing Medium/refusal regressions.
+- Prepared independent review, fixed-target admin installation/removal design and updated exact evidence/release gates. No protected installer, signing anchor, High/cross-account IPC or complete removal proof is claimed.
+- Kept production VERSION 0.6.2, diagnostics, schemas, unconditional elevation rejection and normal installer unchanged; no generated binaries or sensitive test data committed.
+
 ## 0.6.4 — 2026-11-19 — Experimental partial proof of concept (B)
 
 - Added isolated native primary-token/process/known-folder observations and real separate-process Medium named-pipe tests, reusing the unchanged 0.6.3 protocol validator.

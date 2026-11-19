@@ -1,5 +1,7 @@
 # 0.6.4 partial proof of concept — not a protected worker package
 
+0.6.5 remains **B — partial implementation/validation**. Added `Readiness --inspect`, 21 `PolicyTests` checks and a shared descriptor validator now used by actual Medium read-back. The High candidate is parsed in memory only, never created as an endpoint. Added [native C++ refusal source](native/README.md), which is **uncompiled and undeployed**; 17 native compile-time assertions are pending, not passing tests. See [environment readiness](../../docs/security/0_6_5_ENVIRONMENT_READINESS.md), [independent review brief](../../docs/security/0_6_5_INDEPENDENT_REVIEW_BRIEF.md) and [0.6.5 report](../../docs/security/MILESTONE_0_6_5_REPORT.md). The approved admin environment gate remains closed; nothing here authorises elevation or installs tools/accounts/VMs/policies. The test script now builds five managed projects; native build settings are separate and untested.
+
 **Classification B: partial proof of concept.** Real Windows transport and refusal tests run under an ordinary Medium token. No protected installation, elevated token, UAC, high-owned endpoint or cross-account security boundary has been demonstrated. Production remains 0.6.2 Standard-only. Do not install, elevate or distribute these managed build outputs as a privileged worker.
 
 ## Implemented
@@ -19,7 +21,7 @@ Requires Windows x64 and .NET 10 SDK. From the project directory in an ordinary-
 dotnet run --project .\experiments\elevation-protocol\Elevation.ProtocolLab.csproj -c Release -- --self-test
 ```
 
-Do not change machine execution policy to run tests. Build outputs stay under the three experimental projects' ignored `bin/obj` directories, outside production. `Worker` and `Relay` deliberately block `dotnet publish`; no publish/config/environment option opens the deployment gate. Removing that gate requires a reviewed implementation, not a switch. The fixtures can start **only their own fixed lab executable**, non-elevated, with fixed test-mode arguments; the worker/relay contain no process launch, arbitrary command execution or administrative control.
+Do not change machine execution policy to run tests. Build outputs stay under the five managed experimental projects' ignored `bin/obj` directories, outside production. `Worker` and `Relay` deliberately block `dotnet publish`; no publish/config/environment option opens the deployment gate. Removing that gate requires a reviewed implementation, not a switch. The fixtures can start **only their own fixed lab executable**, non-elevated, with fixed test-mode arguments; the worker/relay contain no process launch, arbitrary command execution or administrative control.
 
 Each transport fixture has a five-second read deadline (400 ms for the idle test); the supervisor has an eight-second deadline. It does not kill arbitrary PIDs. Child disconnect/EOF and `using` release process/pipe/token handles. The protocol caps frames at 64 KiB, token result at 4 KiB, chunks at 32 KiB and sessions at 4096 frames. Tests require terminal completion and EOF; incomplete/error/cancelled/malformed transcripts never succeed. These fixture deadlines do not implement the future high worker's supervision or late-UAC cleanup.
 

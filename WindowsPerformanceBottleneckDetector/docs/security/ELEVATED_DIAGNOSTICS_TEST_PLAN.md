@@ -1,4 +1,4 @@
-# Elevated diagnostics test plan — 0.6.3 design / 0.6.4 partial evidence
+# Elevated diagnostics test plan — 0.6.3 design / 0.6.4–0.6.5 partial evidence
 
 This is a repeatable acceptance plan, not a statement that a privileged boundary passed. Production remains 0.6.2 Standard-only. Run unprivileged tests under an ordinary account. Administrator/cross-account/installation tests require a dedicated authorised lab, separate accounts and disposable snapshots; no credentials in scripts, fixtures, logs or source control. Never weaken UAC, antivirus, WDAC/AppLocker or filesystem ACLs to obtain a pass.
 
@@ -108,3 +108,13 @@ The transport cases test: known-folder independence from ProgramFiles environmen
 | 23 | Production isolation | D + W: unchanged paths/gates/build/regressions/Standard integration; no experiment in normal installer |
 
 Incorrect credentials, policy denial, worker launch failure, Administrator protection and WDAC/AppLocker/endpoint-security behaviour remain unexecuted A/X tests. No UAC or endpoint-security setting was weakened. G01–G12 stay open (G07 partial). See [0.6.4 report](MILESTONE_0_6_4_REPORT.md) for installation deferral and next milestone.
+
+## Recorded 0.6.5 evidence — B, environment gate closed
+
+Baseline `b3afc6e`; Windows NT 10.0.26300 x64. [Readiness](0_6_5_ENVIRONMENT_READINESS.md) documents missing/undetected native MSVC/SDK/CMake/signing prerequisites and no established approved disposable multi-account lab. Actual current primary token elevation false, Medium RID 8192, administrator group present/enabled false. No UAC/deployment/removal or admin tests were attempted. Coarse application-control signals were inspected only and do not approve unsigned code.
+
+Run the ordinary-user `experiments/elevation-worker/Test-Experiment.ps1`: it builds all five managed projects, invokes the redacted readiness probe and **21 descriptor policy tests**, then the **21 real Medium transport checks**, **21 executable refusal checks** and **two publish guards**. All passed. Descriptor tests call Windows SDDL conversion in memory and test missing/wrong labels, inappropriate owner/logon, null/unprotected/extra/duplicate/inheritable/write grants and malformed bytes; **they create no High object and prove no effective cross-account permission**. Real Medium descriptor read-back now delegates to this shared stricter validator. No native parser static assertion was compiled/executed; all **17 remain pending**, not passing evidence.
+
+Existing unchanged protocol lab: **34 passed**. Production: **124 PowerShell tests, 21 .NET checks plus missing-engine check passed**; desktop and five managed experimental Release builds zero warnings/errors. The unchanged .NET test rebuild emitted existing CS8602 at Program.cs:377. Current engine hashes matched source; real Standard **15/15 samples**, report ownership/permission consistency/paired reports and cancellation with no partial export passed. Production paths/VERSION/installer and the 0.6.3 wire source are unchanged. Sampling/insight timings 0.1846/0.3858 s are Standard observations, not a high-worker benchmark.
+
+All 23 requested real boundary scenarios retain the 0.6.4 matrix limitations. Additional 0.6.5 protected install/uninstall target rejection, PATH/CWD/dependency substitution, effective file/ancestor write/delete/DACL/owner tests, native high token/admin-membership/unverifiable-token cases, real UAC/account matrix, High owner/MIC/effective access, protected executable identity and privileged crash/late-consent/orphan cleanup remain **unexecuted**. The [review brief](0_6_5_INDEPENDENT_REVIEW_BRIEF.md) gives exact deployment/removal and independent-review evidence required. No gate is closed on synthetic descriptor/native-source inspection alone. [The report](MILESTONE_0_6_5_REPORT.md) records managed executable/DLL identities and pending native build; exact source revision accompanies the review pack.

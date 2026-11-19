@@ -6,6 +6,8 @@ Status: design review, 19 November 2026. Production remains 0.6.2 Standard-only.
 
 ## Revalidated baseline
 
+0.6.5 baseline `b3afc6e` still has no privileged deployment/UAC path. New native source remains uncompiled and deployment-refusing; managed descriptor tests validate bytes only. Medium pipe read-back now rejects missing/unprotected/extra/broad/write/inherited grants and wrong labels through a shared policy. This improves rejection coverage but does not mitigate T01–T07/T12–T13/T16–T18 at a validated high boundary. The user-owned Medium object and mutable images remain untrusted. [Environment readiness](0_6_5_ENVIRONMENT_READINESS.md) prevents privileged experiments on the ordinary workstation; no architecture assumption is replaced by a secret/hash/JSON claim or permissive ACL.
+
 At baseline commit `9135515`, the installer still uses LocalAppData and lowest privileges; desktop is asInvoker; Standard PowerShell loads neighbouring files; Elevated is rejected before discovery/launch; there is no privileged worker/IPC. Token/coverage reporting remains present. A fresh read-only ACL inspection of the installed **0.6.2** executable confirmed current-user ownership and a current-user write grant. This verifies a current deployment fact, not a protected-installation test.
 
 ## Actors and assumptions
