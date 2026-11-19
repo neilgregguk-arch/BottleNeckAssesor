@@ -59,6 +59,13 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     public int Duration { get; set; }
     public int Interval { get; set; }
     public bool PolicyOverride { get; set; }
+    public sealed record ModeOption(DiagnosticMode Mode, string Label, bool Available);
+    public IReadOnlyList<ModeOption> DiagnosticModes { get; } = [new(DiagnosticMode.Standard, "Standard diagnostic", true), new(DiagnosticMode.Elevated, "Elevated (unavailable)", false)];
+    private ModeOption? _diagnosticMode;
+    public ModeOption SelectedDiagnosticMode { get => _diagnosticMode ?? DiagnosticModes[0]; set { _diagnosticMode = value; Changed(); } }
+    public string ModeExplanation => "Standard: no UAC request. Elevated: additional metadata via UAC; unavailable in this build.";
+    public PermissionDisplay? PermissionDetails => _report?.Permissions?.Display;
+    public string PermissionSummary => PermissionDetails?.Summary ?? "Diagnostic permissions were not recorded.";
     public string Version => App.ProductVersion;
     public string Computer => Environment.MachineName;
     public string Status { get; private set; } = "Ready";
@@ -221,7 +228,7 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     {
         ErrorMessage = TechnicalDetails = _collectionDetails = null;
         DiagnosticOptions options;
-        try { options = new DiagnosticOptions(Duration, Interval, OutputDirectory, PolicyOverride).Validate(); }
+        try { options = new DiagnosticOptions(Duration, Interval, OutputDirectory, PolicyOverride, SelectedDiagnosticMode.Mode).Validate(); }
         catch (Exception exception) { ShowError(exception, "Check the diagnostic configuration."); return; }
 
         using var cancellation = new CancellationTokenSource();
@@ -300,7 +307,7 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     {
         try
         {
-            var line = $"{DateTimeOffset.Now:O} · {Status} · {options.DurationSeconds} s / {options.IntervalSeconds} s\n{ErrorMessage}\n{TechnicalDetails}\n{_collectionDetails}";
+            var line = $"{DateTimeOffset.Now:O} · {Status} · Requested mode {options.Mode} · {options.DurationSeconds} s / {options.IntervalSeconds} s\n{ErrorMessage}\n{TechnicalDetails}\n{_collectionDetails}";
             var directory = Directory.CreateDirectory(Path.Combine(_localData, "Logs")).FullName;
             await File.WriteAllTextAsync(Path.Combine(directory, $"WPBD-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}-{Guid.NewGuid():N}.log"), line);
         }

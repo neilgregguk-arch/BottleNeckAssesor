@@ -5,4 +5,5 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup><EmbeddedResource Include="../../src/Presentation-Format.json" Link="Presentation-Format.json" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/WorkerToken.cs" Link="WorkerToken.cs" /></ItemGroup>
 </Project>

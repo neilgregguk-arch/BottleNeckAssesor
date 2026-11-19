@@ -14,6 +14,14 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        var token = Wpbd.WorkerToken.ReadCurrent();
+        if (!token.UnprivilegedDesktop)
+        {
+            MessageBox.Show("Start WPBD normally under your signed-in user. The desktop interface must run without administrator privileges.",
+                "WPBD desktop permissions", MessageBoxButton.OK, MessageBoxImage.Information);
+            Shutdown();
+            return;
+        }
         GC.KeepAlive(InstallationGuard);
         base.OnStartup(e);
     }

@@ -19,6 +19,7 @@ public sealed class EngineRunner(string engineDirectory)
         CancellationToken cancellationToken)
     {
         options = options.Validate();
+        ElevationPolicy.RequireSupported(options.Mode);
         cancellationToken.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 14393))
             throw new EngineException("Use a supported Windows 10 or Windows 11 workstation.");
@@ -27,7 +28,10 @@ public sealed class EngineRunner(string engineDirectory)
         var worker = Path.Combine(directory, "Invoke-WpbdDesktop.ps1");
         var required = new[] { worker, Path.Combine(directory, "src", "WPBD.psm1"),
             Path.Combine(directory, "src", "Collect-Metrics.ps1"), Path.Combine(directory, "src", "Analyse-Metrics.ps1"),
-            Path.Combine(directory, "src", "Export-Report.ps1"), Path.Combine(directory, "src", "Process-Applications.ps1") };
+            Path.Combine(directory, "src", "Export-Report.ps1"), Path.Combine(directory, "src", "Process-Applications.ps1"),
+            Path.Combine(directory, "src", "Permissions.ps1"), Path.Combine(directory, "src", "WorkerToken.cs"),
+            Path.Combine(directory, "src", "Diagnostic-Insights.ps1"), Path.Combine(directory, "src", "Presentation.ps1"),
+            Path.Combine(directory, "src", "Presentation-Format.json") };
         var missing = required.Where(path => !File.Exists(path)).ToArray();
         if (missing.Length > 0)
             throw new EngineException("The bundled diagnostic engine is incomplete. Restore the Engine folder from the same build.",

@@ -405,6 +405,7 @@ function Get-WpbdMetrics {
 
     $errors = [ordered]@{}
     $clock = [Diagnostics.Stopwatch]::StartNew()
+    $permissions = Get-WpbdWorkerPermissions
     $system = Get-WpbdSystem $errors
     $metadataBefore = $null
     $metadata = @(Get-WpbdProcessMetadata $errors -Phase Before -Timing ([ref] $metadataBefore))
@@ -514,6 +515,7 @@ function Get-WpbdMetrics {
 
     [pscustomobject]@{
         SchemaVersion = '0.3'
+        Permissions = $permissions
         Configuration = [pscustomobject]@{
             DurationSeconds = $DurationSeconds; SampleIntervalSeconds = $SampleIntervalSeconds
             ExpectedSamples = $sampleCount; ProcessorCounterClass = $processorState.SelectedClass
@@ -523,6 +525,7 @@ function Get-WpbdMetrics {
         ActualDurationSeconds = $clock.Elapsed.TotalSeconds - $origin
         MissedSlots = $missedSlots.ToArray()
         CollectionTiming = [pscustomobject]@{
+            TokenInspectionSeconds = $permissions.TokenInspectionSeconds
             InventorySeconds = $inventorySeconds; Baseline = $baselineTiming
             PostSamplingSeconds = $postSampling.Elapsed.TotalSeconds
             ProcessMetadataBefore = $metadataBefore; ProcessMetadataAfter = $metadataAfter

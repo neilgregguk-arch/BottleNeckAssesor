@@ -46,11 +46,19 @@
                         <ComboBox ItemsSource="{Binding Intervals}" SelectedItem="{Binding Interval}" IsEnabled="{Binding CanConfigure}"
                                   AutomationProperties.Name="Sampling interval in seconds"/>
                     </StackPanel>
+                    <StackPanel Margin="0,0,12,7" Width="186">
+                        <TextBlock Text="Diagnostic mode" Style="{StaticResource MutedText}" FontSize="11"/>
+                        <ComboBox ItemsSource="{Binding DiagnosticModes}" SelectedItem="{Binding SelectedDiagnosticMode}" DisplayMemberPath="Label"
+                                  IsEnabled="{Binding CanConfigure}" AutomationProperties.Name="Diagnostic mode" ToolTip="{Binding ModeExplanation}">
+                            <ComboBox.ItemContainerStyle><Style TargetType="ComboBoxItem" BasedOn="{StaticResource {x:Type ComboBoxItem}}"><Setter Property="IsEnabled" Value="{Binding Available}"/></Style></ComboBox.ItemContainerStyle>
+                        </ComboBox>
+                    </StackPanel>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,0,0,7">
                         <Button Content="Start Diagnostic" Command="{Binding StartCommand}" Style="{StaticResource StartButton}" Margin="0,0,6,0"/>
                         <Button Content="Cancel Diagnostic" Command="{Binding CancelCommand}"/>
                     </StackPanel>
                 </WrapPanel>
+                <TextBlock Text="{Binding ModeExplanation}" Style="{StaticResource MutedText}" FontSize="11" Margin="0,0,0,5"/>
                 <DockPanel LastChildFill="True">
                     <Button DockPanel.Dock="Right" Content="Choose folder" Command="{Binding ChooseFolderCommand}" Margin="8,0,0,0"/>
                     <StackPanel VerticalAlignment="Center">
@@ -191,6 +199,7 @@
                         <Border Style="{StaticResource PanelSurface}" Margin="0,0,0,8">
                             <StackPanel>
                                 <TextBlock Text="{Binding Overview.Summary, TargetNullValue='No completed assessment'}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding PermissionSummary}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                                 <TextBlock Text="{Binding Overview.Focus}" TextWrapping="Wrap" Margin="0,7,0,0"/>
                                 <TextBlock Text="{Binding Overview.Counts}" TextWrapping="Wrap"/>
                                 <TextBlock Text="{Binding Overview.Sampling}" TextWrapping="Wrap"/>
@@ -201,6 +210,13 @@
                         <Border Style="{StaticResource PanelSurface}" Margin="0,0,0,8">
                             <Expander Header="Sampling quality and collection details">
                                 <StackPanel>
+                                    <TextBlock Text="{Binding PermissionDetails.TokenSummary}" TextWrapping="Wrap" Margin="0,4,0,4"/>
+                                    <ItemsControl ItemsSource="{Binding PermissionDetails.Coverage}"><ItemsControl.ItemTemplate><DataTemplate>
+                                        <Grid Margin="0,2"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Measurement}" TextWrapping="Wrap"/><TextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap"/>
+                                        </Grid>
+                                    </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+                                    <TextBlock Text="{Binding PermissionDetails.Limitations}" TextWrapping="Wrap" Margin="0,5,0,5"/>
                                     <TextBlock Text="{Binding QualitySummary}" TextWrapping="Wrap"/>
                                     <TextBlock Text="{Binding TimingSummary}" Style="{StaticResource MutedText}"/>
                                     <ItemsControl ItemsSource="{Binding CoverageGaps}"><ItemsControl.ItemTemplate><DataTemplate>
@@ -425,6 +441,7 @@
                               AutomationProperties.Name="Report history">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="JSON report" Binding="{Binding FileName}" Width="*" ElementStyle="{StaticResource CellText}"/>
+                            <DataGridTextColumn Header="Diagnostic mode / worker" Binding="{Binding DiagnosticMode}" Width="250" ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Modified" Binding="{Binding Modified, StringFormat=g}" Width="155" ElementStyle="{StaticResource CellText}"/>
                         </DataGrid.Columns>
                     </DataGrid>

@@ -437,8 +437,9 @@ function Get-WpbdAnalysis {
     $sampling = Get-WpbdSamplingSummary $Metrics $samples $expected $cpu $memory.Statistics
     $sampling.Timing | Add-Member -NotePropertyName AttributionAnalysisSeconds -NotePropertyValue $attributionWatch.Elapsed.TotalSeconds
     $diagnostic = [pscustomobject]@{
-        ApplicationVersion = '0.6.1'; EngineVersion = '0.6.0'
+        ApplicationVersion = '0.6.2'; EngineVersion = '0.6.0'
         SchemaVersion = '0.3'
+        Permissions = Get-WpbdPermissionReport $Metrics.Permissions $process.All $attribution $sampling.Quality $Metrics.CollectionErrors
         Configuration = $Metrics.Configuration; Thresholds = [pscustomobject] $thresholds; System = $Metrics.System
         StartedUtc = $Metrics.StartedUtc; CompletedUtc = $Metrics.CompletedUtc
         ActualDurationSeconds = $Metrics.ActualDurationSeconds; Samples = $samples
@@ -463,6 +464,7 @@ function Get-WpbdAnalysis {
     $watch.Stop()
     $diagnostic | Add-Member -NotePropertyName DiagnosticInsights -NotePropertyValue $insights
     $diagnostic.CollectionTiming | Add-Member -NotePropertyName InsightAnalysisSeconds -NotePropertyValue $watch.Elapsed.TotalSeconds
+    $diagnostic.CollectionTiming | Add-Member -NotePropertyName TokenInspectionSeconds -NotePropertyValue $Metrics.CollectionTiming.TokenInspectionSeconds
     $diagnostic
 
 }

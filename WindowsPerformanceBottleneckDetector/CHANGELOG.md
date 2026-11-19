@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.2 — 2026-11-19 — Standard-only foundation; elevated feature incomplete
+
+- Stopped privileged execution at the release gate: the current user-writable deployment has not been replaced by a verified protected-worker/IPC architecture. Elevated is unavailable in the UI and rejected by the runner before process launch. No UAC request or privileged worker is shipped.
+- Added read-only worker token elevation, integrity and administrator-group evidence without account names/SIDs; the WPF desktop refuses a high/elevated token.
+- Added structured metadata/sampling coverage to JSON, expandable permission reporting in WPF/HTML and bounded mode-header reading in history. Retained schema 0.3, original identity/attribution safeguards and diagnostic thresholds.
+- Preserved Standard execution, per-user installer AppId, preferences, reports and logs; documented the outstanding security design and unexecuted elevation test scenarios.
+
+
 ## 0.6.1 — 2026-11-19
 
 - Added a compact diagnostic overview and grouped matching insights, findings and advisories without removing original report data.

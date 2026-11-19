@@ -801,7 +801,7 @@ Describe 'WPBD diagnostic engine' {
                 $h.Contains([Net.WebUtility]::HtmlEncode($i.DetailText)) | Should Be $false
                 $h.Contains([Net.WebUtility]::HtmlEncode($i.Title)) | Should Be $true
             }
-            $h | Should Match 'Application 0.6.1'
+            $h | Should Match 'Application 0.6.2'
             $h | Should Not Match 'Version 0.2|worker<script>'
         }
         It 'does not invent historical insights when exporting an older report' {
@@ -924,7 +924,7 @@ Describe 'WPBD diagnostic engine' {
         It 'displays application engine and schema versions independently' {
             $paths=Export-WpbdReport (Get-WpbdAnalysis (New-TestMetrics)) $TestDrive
             $h=Get-Content $paths.HtmlPath -Raw
-            $h | Should Match 'Application 0.6.1 &middot; Engine 0.6.0 &middot; Schema 0.3'
+            $h | Should Match 'Application 0.6.2 &middot; Engine 0.6.0 &middot; Schema 0.3'
         }
         It 'preserves full precision and the original structured insight payload during export' {
             $r=Get-WpbdAnalysis (New-TestMetrics -Paging);$i=$r.DiagnosticInsights[0]
@@ -943,6 +943,84 @@ Describe 'WPBD diagnostic engine' {
             $paths=Export-WpbdReport $r $TestDrive
             $r.Samples.Count | Should Be 500
             (Get-Content $paths.HtmlPath -Raw) | Should Not Match '"SupportingEvidence"|"Average"\s*:'
+        }
+    }
+
+    Context '0.6.2 incomplete elevation gate and permission evidence' {
+        It 'does not invent a worker token or standard mode for synthetic inputs' {
+            $r=Get-WpbdAnalysis (New-TestMetrics)
+            $r.Permissions.RequestedMode | Should Be 'NotRecorded'
+            $r.Permissions.ActualWorkerIsElevated | Should BeNullOrEmpty
+            $r.Permissions.TokenInspectionStatus | Should Be 'NotRecorded'
+            $r.Permissions.ElevationOutcome | Should Be 'NotVerified'
+        }
+        It 'reports captured Standard token evidence without account identity' {
+            $m=New-TestMetrics
+            $m | Add-Member Permissions ([pscustomobject]@{RequestedMode='Standard';ElevationOutcome='NotRequested';TokenInspectionStatus='Available';ActualWorkerIsElevated=$false;AdministratorGroupPresent=$true;AdministratorGroupEnabled=$false;IntegrityRid=8192;IntegrityLevel='Medium'})
+            $r=Get-WpbdAnalysis $m
+            $r.Permissions.RequestedMode | Should Be 'Standard'
+            $r.Permissions.ElevationOutcome | Should Be 'NotRequested'
+            $r.Permissions.ActualWorkerIsElevated | Should Be $false
+            $r.Permissions.VerifiedHighIntegrityAdministrator | Should Be $false
+            ($r.Permissions | ConvertTo-Json -Depth 8) | Should Not Match 'Username|Password|Credential|UserSid|AccountName'
+        }
+        It 'does not equate administrator membership with an elevated token' {
+            $m=New-TestMetrics
+            $m | Add-Member Permissions ([pscustomobject]@{RequestedMode='Elevated';ElevationOutcome='Succeeded';TokenInspectionStatus='Available';ActualWorkerIsElevated=$false;AdministratorGroupPresent=$true;AdministratorGroupEnabled=$true;IntegrityRid=12288;IntegrityLevel='High'})
+            $r=Get-WpbdAnalysis $m
+            $r.Permissions.ElevationOutcome | Should Be 'NotVerified'
+            $r.Permissions.VerifiedHighIntegrityAdministrator | Should Be $false
+            (& (Get-Module WPBD) {param($x) Get-WpbdPermissionPresentation $x} $r.Permissions).Summary | Should Not Match 'Succeeded|success'
+        }
+        It 'does not accept a claimed verified flag when token proof is absent' {
+            $m=New-TestMetrics
+            $m | Add-Member Permissions ([pscustomobject]@{RequestedMode='Elevated';ElevationOutcome='Succeeded';TokenInspectionStatus='Unavailable';ActualWorkerIsElevated=$true;AdministratorGroupEnabled=$true;IntegrityRid=12288;VerifiedHighIntegrityAdministrator=$true})
+            $r=Get-WpbdAnalysis $m
+            $r.Permissions.VerifiedHighIntegrityAdministrator | Should Be $false
+            $r.Permissions.ElevationOutcome | Should Be 'NotVerified'
+        }
+        It 'reports captured high token evidence independently of any elevation request outcome' {
+            $m=New-TestMetrics
+            $m | Add-Member Permissions ([pscustomobject]@{RequestedMode='Standard';ElevationOutcome='NotRequested';TokenInspectionStatus='Available';ActualWorkerIsElevated=$true;AdministratorGroupEnabled=$true;IntegrityRid=12288;IntegrityLevel='High'})
+            $r=Get-WpbdAnalysis $m
+            $r.Permissions.VerifiedHighIntegrityAdministrator | Should Be $true
+            $r.Permissions.ElevationOutcome | Should Be 'NotRequested'
+        }
+        It 'rejects coercible strings and fractional integrity evidence' {
+            $m=New-TestMetrics
+            $m | Add-Member Permissions ([pscustomobject]@{RequestedMode='Elevated';ElevationOutcome='Succeeded';TokenInspectionStatus='Available';ActualWorkerIsElevated='true';AdministratorGroupEnabled=$true;IntegrityRid=12288.5})
+            $r=Get-WpbdAnalysis $m
+            $r.Permissions.VerifiedHighIntegrityAdministrator | Should Be $false
+        }
+        It 'counts metadata coverage by identities without claiming complete machine coverage' {
+            $m=New-TestMetrics -Cpu
+            $m | Add-Member ProcessMetadata @([pscustomobject]@{Id=42;Identity=("42/"+([DateTimeOffset]'2025-01-02T10:00:00Z').UtcTicks);StartUtc='2025-01-02T10:00:00Z';Path='C:\Example\worker.exe';Services=@('ExampleService')})
+            $r=Get-WpbdAnalysis $m
+            $r.Permissions.Coverage.CapturedIdentities | Should Be 1
+            $r.Permissions.Coverage.VerifiedIdentityPercent | Should Be 100
+            $r.Permissions.Coverage.ExecutablePathPercent | Should Be 100
+            $r.Permissions.Coverage.ServiceAssociationPercent | Should Be 100
+            ($r.Permissions.Limitations -join ' ') | Should Match 'different process populations'
+        }
+        It 'keeps empty coverage percentages unavailable' {
+            $m=New-TestMetrics;foreach($sample in $m.Samples){$sample.Processes=@()}
+            $r=Get-WpbdAnalysis $m
+            $r.Permissions.Coverage.CapturedIdentities | Should Be 0
+            $r.Permissions.Coverage.VerifiedIdentityPercent | Should BeNullOrEmpty
+            $r.Permissions.Coverage.ExecutablePathPercent | Should BeNullOrEmpty
+        }
+        It 'renders permission mode evidence consistently while retaining legacy unknown status' {
+            $m=New-TestMetrics
+            $m | Add-Member Permissions ([pscustomobject]@{RequestedMode='Standard';ElevationOutcome='NotRequested';TokenInspectionStatus='Available';ActualWorkerIsElevated=$false;AdministratorGroupPresent=$false;AdministratorGroupEnabled=$false;IntegrityRid=8192;IntegrityLevel='Medium'})
+            $r=Get-WpbdAnalysis $m
+            $p=& (Get-Module WPBD) {param($x) Get-WpbdPermissionPresentation $x} $r.Permissions
+            $paths=Export-WpbdReport $r $TestDrive;$h=Get-Content $paths.HtmlPath -Raw
+            $h.Contains([Net.WebUtility]::HtmlEncode($p.Summary)) | Should Be $true
+            $h.Contains([Net.WebUtility]::HtmlEncode($p.TokenSummary)) | Should Be $true
+            foreach($row in $p.Coverage){$h.Contains([Net.WebUtility]::HtmlEncode($row.Measurement)) | Should Be $true}
+            $r.PSObject.Properties.Remove('Permissions')
+            $old=Export-WpbdReport $r $TestDrive
+            (Get-Content $old.HtmlPath -Raw) | Should Match 'Diagnostic permissions were not recorded'
         }
     }
 

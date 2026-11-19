@@ -1,3 +1,4 @@
+. "$PSScriptRoot/Permissions.ps1"
 . "$PSScriptRoot/Collect-Metrics.ps1"
 . "$PSScriptRoot/Analyse-Metrics.ps1"
 . "$PSScriptRoot/Process-Applications.ps1"

@@ -180,5 +180,71 @@
       "FreeBytes",
       "CapacityBytes"
     ]
+  },
+  "PermissionFields": {
+    "CapturedIdentities": {
+      "Label": "Captured process identities",
+      "Unit": "count"
+    },
+    "VerifiedIdentities": {
+      "Label": "Verified process identities",
+      "Unit": "count"
+    },
+    "VerifiedIdentityPercent": {
+      "Label": "Verified process identities (%)",
+      "Unit": "percent"
+    },
+    "ExecutablePaths": {
+      "Label": "Executable paths available",
+      "Unit": "count"
+    },
+    "ExecutablePathPercent": {
+      "Label": "Executable paths available (%)",
+      "Unit": "percent"
+    },
+    "ServiceAssociatedIdentities": {
+      "Label": "Identities with service associations",
+      "Unit": "count"
+    },
+    "ServiceAssociationPercent": {
+      "Label": "Identities with service associations (%)",
+      "Unit": "percent"
+    },
+    "AttributionPercent": {
+      "Label": "Application, Windows and service attribution (%)",
+      "Unit": "percent"
+    },
+    "IdentifiedApplications": {
+      "Label": "Identified application identities",
+      "Unit": "count"
+    },
+    "IdentifiedServices": {
+      "Label": "Identified service identities",
+      "Unit": "count"
+    },
+    "RestrictedMetadataIdentities": {
+      "Label": "Restricted metadata identities",
+      "Unit": "count"
+    },
+    "CollectionErrorGroups": {
+      "Label": "Collection error groups",
+      "Unit": "count"
+    },
+    "ExpectedSamples": {
+      "Label": "Scheduled samples",
+      "Unit": "count"
+    },
+    "ActualSamples": {
+      "Label": "Collected samples",
+      "Unit": "count"
+    },
+    "ValidCpuSamples": {
+      "Label": "Valid CPU samples",
+      "Unit": "count"
+    },
+    "MissedSamples": {
+      "Label": "Missed samples",
+      "Unit": "count"
+    }
   }
 }

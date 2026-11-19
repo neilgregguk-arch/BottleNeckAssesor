@@ -57,6 +57,12 @@ function ConvertTo-WpbdHtmlReport {
     param($Diagnostic)
     $insights = @($Diagnostic.DiagnosticInsights | Where-Object { $_.Id -ne 'operation.normal' -and $null -ne $_ } | ForEach-Object { New-WpbdHtmlInsight $_ $Diagnostic })
     $insightsSection = if ($insights.Count) { "<section><h2>Diagnostic Insights</h2><p>Priority: investigation usefulness and urgency. Severity: observed condition. Confidence: evidence strength.</p>$($insights -join "`n")</section>" }
+    $permissionDisplay=Get-WpbdPermissionPresentation $Diagnostic.Permissions
+    $permissionSummary=if($permissionDisplay){ConvertTo-WpbdHtmlText $permissionDisplay.Summary}else{'Diagnostic permissions were not recorded.'}
+    $permissionSection=if($permissionDisplay){
+        $permissionTable=New-WpbdHtmlTable @('Metadata and sampling coverage','Recorded value') @($permissionDisplay.Coverage | ForEach-Object {,@($_.Measurement,$_.Value)})
+        '<section><details><summary>Diagnostic permissions and metadata coverage</summary><p>' + (ConvertTo-WpbdHtmlText $permissionDisplay.TokenSummary) + '</p>' + $permissionTable + '<p class="technical-text">' + (ConvertTo-WpbdHtmlText $permissionDisplay.Limitations) + '</p></details></section>'
+    }
     $overview = Get-WpbdOverview $Diagnostic
     $overviewText = '<p class="assessment">' + (ConvertTo-WpbdHtmlText $overview.Summary) + '</p><p>' + (ConvertTo-WpbdHtmlText $overview.Focus) + '</p><p>' + (ConvertTo-WpbdHtmlText $overview.Counts) + '</p><p>' + (ConvertTo-WpbdHtmlText $overview.Sampling) + '</p>'
     $represented = @($Diagnostic.DiagnosticInsights | ForEach-Object { $_.RelatedFindingCategory })
@@ -241,6 +247,7 @@ function ConvertTo-WpbdHtmlReport {
         'Attribution category', 'Attribution confidence', 'Metadata access', 'Services', 'Path', 'Evidence',
         'Reason codes', 'Metadata identity match', 'Image path source') $identityRows
     $enrichmentRows = @(
+        ,@('Worker token inspection (s)', (Format-WpbdNumber $timing.TokenInspectionSeconds))
         ,@('Before-sampling metadata (s)', (Format-WpbdNumber $timing.ProcessMetadataBefore.TotalSeconds))
         ,@('Before-sampling image lookups (s)', (Format-WpbdNumber $timing.ProcessMetadataBefore.ImageLookupSeconds))
         ,@('After-sampling metadata (s)', (Format-WpbdNumber $timing.ProcessMetadataAfter.TotalSeconds))
@@ -318,10 +325,12 @@ th{background:#e9f1f6} tbody tr:nth-child(even){background:#f5f8fa} summary{curs
 <p><strong>$computer</strong> &middot; Application $release &middot; Engine $engine &middot; Schema $schema</p>
 <p class="meta">$start to $end &middot; $duration s elapsed</p>
 $overviewText
+<p>$permissionSummary</p>
 <p class="meta">A short diagnostic cannot rule out intermittent problems.</p>
 $repeatGuidance
 </header>
 <main>
+$permissionSection
 $insightsSection
 $findingsSection
 $advisoriesSection

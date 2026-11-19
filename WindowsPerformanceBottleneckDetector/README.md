@@ -1,10 +1,12 @@
 # Windows Performance Bottleneck Detector
 
-WPBD 0.6.1 presents evidence-based troubleshooting insights in concise summaries and readable tables in the Windows desktop app and offline reports, alongside process identity and attribution quality. WPBD samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. The read-only engine runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. It requires no agent, external PowerShell module or internet connection.
+**WPBD 0.6.2 is a Standard-only permissions foundation. Optional elevated diagnostics remain incomplete and disabled.** The desktop does not request UAC or ship a privileged worker. The existing user-writable deployment is not being elevated without a completed trust-boundary design.
+
+WPBD presents evidence-based troubleshooting insights in concise summaries and readable tables in the Windows desktop app and offline reports, alongside process identity and attribution quality. WPBD samples CPU, physical memory, paging, physical disk I/O and processes, then reports evidence that may explain a workstation slowdown. The read-only engine runs in Windows PowerShell 5.1 with the Windows CIM and Event Log providers. It requires no agent, external PowerShell module or internet connection.
 
 ## Install WPBD
 
-Copy `WPBD-Setup-0.6.1-x64.exe` to a compatible workstation and double-click it. Setup installs the app for the current user under `%LOCALAPPDATA%\Programs\WPBD`, adds a Start menu shortcut and offers an optional desktop shortcut. Select **Launch Windows Performance Bottleneck Detector** at the end of Setup, or open WPBD from Start.
+Copy `WPBD-Setup-0.6.2-x64.exe` to a compatible workstation and double-click it. Setup installs the app for the current user under `%LOCALAPPDATA%\Programs\WPBD`, adds a Start menu shortcut and offers an optional desktop shortcut. Select **Launch Windows Performance Bottleneck Detector** at the end of Setup, or open WPBD from Start.
 
 The installer bundles the self-contained .NET 10 desktop runtime and diagnostic scripts. The target needs native x64 Windows 11 or a Windows 10 edition supported by .NET 10, Windows PowerShell 5.1, and write access to the user's local application data. Setup works offline and runs with current-user permissions. Your organisation's application-control and script policies still apply. [Microsoft .NET Windows support](https://learn.microsoft.com/dotnet/core/install/windows#supported-versions)
 
@@ -15,7 +17,7 @@ To remove WPBD, close it and select **Uninstall** in Windows **Settings > Apps >
 The unsigned installer may trigger a Microsoft Defender SmartScreen warning. Verify it against the SHA-256 published by your distributor and follow your organisation's approval process. With the setup file and its checksum file in the current folder, a technician can verify the bytes with:
 
 ```powershell
-$name = 'WPBD-Setup-0.6.1-x64.exe'
+$name = 'WPBD-Setup-0.6.2-x64.exe'
 $expected = ((Get-Content -LiteralPath ".\$name.sha256" -Raw).Trim() -split '\s+', 2)[0]
 $actual = (Get-FileHash -LiteralPath ".\$name" -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw 'Installer SHA-256 mismatch.' }
@@ -35,7 +37,7 @@ Use `-ISCCPath 'C:\path\to\ISCC.exe'` if the compiler is in a custom location. T
 For production signing, use an organisation-issued Authenticode code-signing certificate and the Windows SDK SignTool. Sign the finished installer and regenerate its checksum from the signed bytes. Use the organisation's certificate thumbprint and RFC 3161 timestamp service. [Microsoft SignTool reference](https://learn.microsoft.com/windows/win32/seccrypto/signtool)
 
 ```powershell
-$setup = '.\installer\artifacts\WPBD-Setup-0.6.1-x64.exe'
+$setup = '.\installer\artifacts\WPBD-Setup-0.6.2-x64.exe'
 signtool sign /sha1 'CERTIFICATE_THUMBPRINT' /fd SHA256 /tr 'RFC3161_TIMESTAMP_URL' /td SHA256 $setup
 if ($LASTEXITCODE -ne 0) { throw 'Installer signing failed.' }
 signtool verify /pa $setup
@@ -43,6 +45,18 @@ if ($LASTEXITCODE -ne 0) { throw 'Installer signature verification failed.' }
 $hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
 "$hash  $(Split-Path -Leaf $setup)" | Set-Content -LiteralPath "$setup.sha256" -Encoding Ascii
 ```
+
+## Permission evidence in 0.6.2 — elevation incomplete
+
+Standard is the default at every startup. Elevated appears as unavailable in the mode selector. An API request for Elevated also fails before any process is launched; placing a worker-looking file beside WPBD cannot enable it. No credentials, UAC policy changes, SeDebugPrivilege changes, elevated service or scheduled task were introduced. The desktop refuses an elevated/high-integrity launch; start it normally to browse and collect diagnostics.
+
+Standard collection records the actual worker token using Windows token APIs, separately from administrator-group presence/enabled state. It captures no account name or account SID. This read and helper initialisation occur before the existing sampling baseline; time is recorded separately as `CollectionTiming.TokenInspectionSeconds`. Unknown values stay unavailable. A high token observed in a separately launched CLI session does not imply that WPBD requested or successfully completed UAC elevation.
+
+Reports add optional `Permissions` evidence under retained schema 0.3. It includes requested mode, token-inspection availability, token elevation, integrity, group state, outcome, metadata coverage and limitations. Coverage includes verified identities, available executable paths, service associations, attribution, restricted identities, errors and sampling counts. Denominators are captured identities, not the entire machine process population. Independently captured scans cannot establish that elevation alone caused a coverage change. Older reports continue opening with permission evidence marked not recorded.
+
+Findings and HTML show the recorded mode and expandable coverage. History reads at most 8 KiB from each report header to label new reports, without scanning their large sample arrays. Existing findings, insights, Teams/WebView2 ownership and identity rules remain unchanged. The installer retains its per-user AppId, upgrade behaviour, reports, preferences and logs. No privileged executable is included or left behind on uninstall.
+
+See `ELEVATION_SECURITY_REVIEW.md` for the concrete deployment finding, trust boundary, incomplete worker/IPC requirements, test matrix and deployment metadata. **This installer does not fulfil the optional-elevation acceptance criteria.**
 
 ## Presentation refinement in 0.6.1
 
@@ -75,7 +89,7 @@ Severity is the existing finding's condition level; priority is investigation ur
 
 Normal reports contain one concise normal-operation insight unless the existing engine also produced an advisory or supported logical-processor context. Missing counters remain unavailable. The HTML header now reports recorded application, engine and schema versions separately, with absent historical versions labelled not recorded.
 
-Schema **0.3 is retained**: `DiagnosticInsights`, `ApplicationVersion`, `EngineVersion` and `CollectionTiming.InsightAnalysisSeconds` are additive optional fields. Each insight records `Id`, title/category, priority/severity/confidence, related finding category, observation/interpretation, measurement references, structured supporting evidence, selected slots and UTC window, contributors, investigation steps and limitations. `DetailText` is retained as a legacy derived field; current WPF and HTML views format the structured fields instead. Old reports without insights retain their original findings and show no invented historical insight. The current application release is 0.6.1 and the unchanged diagnostic engine is 0.6.0; neither is the schema version.
+Schema **0.3 is retained**: `DiagnosticInsights`, `ApplicationVersion`, `EngineVersion` and `CollectionTiming.InsightAnalysisSeconds` are additive optional fields. Each insight records `Id`, title/category, priority/severity/confidence, related finding category, observation/interpretation, measurement references, structured supporting evidence, selected slots and UTC window, contributors, investigation steps and limitations. `DetailText` is retained as a legacy derived field; current WPF and HTML views format the structured fields instead. Old reports without insights retain their original findings and show no invented historical insight. The current application release is 0.6.2 and the unchanged diagnostic engine is 0.6.0; neither is the schema version.
 
 See `DIAGNOSTIC_INTELLIGENCE_REVIEW.md` for validation, timings, controlled examples and limitations.
 

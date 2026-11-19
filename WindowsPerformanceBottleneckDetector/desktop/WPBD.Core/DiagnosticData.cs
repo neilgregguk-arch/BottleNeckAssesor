@@ -4,13 +4,14 @@ using System.Text.RegularExpressions;
 
 namespace WPBD.Core;
 
-public sealed record DiagnosticOptions(int DurationSeconds, int IntervalSeconds, string OutputDirectory, bool AllowProcessPolicyOverride)
+public sealed record DiagnosticOptions(int DurationSeconds, int IntervalSeconds, string OutputDirectory, bool AllowProcessPolicyOverride, DiagnosticMode Mode = DiagnosticMode.Standard)
 {
     public static IReadOnlyList<int> Durations { get; } = Array.AsReadOnly(new[] { 30, 60, 120, 300 });
     public static IReadOnlyList<int> Intervals { get; } = Array.AsReadOnly(new[] { 1, 2, 5, 10 });
 
     public DiagnosticOptions Validate()
     {
+        if (!Enum.IsDefined(Mode)) throw new ArgumentException("Choose a supported diagnostic mode.");
         if (!Durations.Contains(DurationSeconds) || !Intervals.Contains(IntervalSeconds) || IntervalSeconds > DurationSeconds)
             throw new ArgumentException("Select a supported diagnostic duration and sampling interval.");
         if (string.IsNullOrWhiteSpace(OutputDirectory) || !Path.IsPathFullyQualified(OutputDirectory))
@@ -65,7 +66,7 @@ public sealed record DiagnosticInsight(string Id, string Title, string Category,
 public sealed record DiagnosticReport(string Schema, string Computer, DateTimeOffset Started, string Assessment,
     bool Incomplete, IReadOnlyList<string> CoverageGaps, IReadOnlyList<Sample> Samples, IReadOnlyList<Finding> Findings,
     IReadOnlyList<ProcessReading> Processes, SamplingQuality Quality, string JsonPath, string? HtmlPath,
-    IReadOnlyList<ApplicationReading>? Applications = null, AttributionQuality? Attribution = null, IReadOnlyList<DiagnosticInsight>? Insights = null, string? ApplicationVersion = null, string? EngineVersion = null);
+    IReadOnlyList<ApplicationReading>? Applications = null, AttributionQuality? Attribution = null, IReadOnlyList<DiagnosticInsight>? Insights = null, string? ApplicationVersion = null, string? EngineVersion = null, DiagnosticPermissions? Permissions = null);
 
 public sealed record EngineProgress(string Phase, Sample? Sample = null, int Collected = 0, int Expected = 0);
 
@@ -117,7 +118,8 @@ public static class DiagnosticData
                 RequiredText(item, "Id"), RequiredText(item, "Title"), RequiredText(item, "Category"),
                 RequiredText(item, "Priority"), RequiredText(item, "Severity"), RequiredText(item, "Confidence"),
                 RequiredText(item, "Observation"), item.Text("DetailText") ?? "", item.Clone())).ToArray(),
-            root.Text("ApplicationVersion"), root.Text("EngineVersion"));
+            root.Text("ApplicationVersion"), root.Text("EngineVersion"),
+            root.Field("Permissions") is { ValueKind: JsonValueKind.Object } permission ? new DiagnosticPermissions(permission.Clone()) : null);
         foreach (var insight in report.Insights!) insight.TechnicalOwnership = InsightPresenter.Ownership(insight, report.Processes);
         return report;
     }

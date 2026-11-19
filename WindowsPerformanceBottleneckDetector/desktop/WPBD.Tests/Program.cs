@@ -7,6 +7,56 @@ var temporary = Directory.CreateTempSubdirectory("wpbd-tests-").FullName;
 var valid = Path.Combine(temporary, "WPBD-test.json");
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("0.6.2 Standard default and unavailable elevated requests fail before engine execution", async () =>
+    {
+        var options=new DiagnosticOptions(30,2,temporary,false);
+        Check(options.Mode==DiagnosticMode.Standard && !ElevationPolicy.IsAvailable,"Default mode or feature gate changed.");
+        ElevationPolicy.RequireSupported(options.Mode);
+        Throws<ArgumentException>(()=>(options with { Mode=(DiagnosticMode)99 }).Validate());
+        if(OperatingSystem.IsWindows()){
+            // Even a directory containing a worker-looking executable cannot activate the release gate.
+            await File.WriteAllTextAsync(Path.Combine(temporary,"WPBD.Worker.exe"),"not a trusted worker");
+            try { await new EngineRunner(temporary).RunAsync(options with {Mode=DiagnosticMode.Elevated},new InlineProgress(_=>throw new Exception("Unexpected progress")),CancellationToken.None); }
+            catch(EngineException error){Check(error.Message.Contains("unavailable"),"Elevated mode reached the launch path.");return;}
+            throw new Exception("An unavailable elevated request was accepted.");
+        }
+    }),
+    ("0.6.2 token proof requires availability, elevation, enabled administrator and high integrity", () =>
+    {
+        Check(!PermissionPresenter.VerifiedHighIntegrityAdministrator(true,false,true,0x3000),"Membership was treated as elevation.");
+        Check(!PermissionPresenter.VerifiedHighIntegrityAdministrator(true,true,false,0x3000),"Disabled admin group accepted.");
+        Check(!PermissionPresenter.VerifiedHighIntegrityAdministrator(true,true,true,0x2000),"Medium integrity accepted.");
+        Check(!PermissionPresenter.VerifiedHighIntegrityAdministrator(false,true,true,0x3000),"Unavailable evidence accepted.");
+        Check(!PermissionPresenter.VerifiedHighIntegrityAdministrator(true,true,true,null),"Missing integrity accepted.");
+        Check(PermissionPresenter.VerifiedHighIntegrityAdministrator(true,true,true,0x3000),"Complete token proof rejected.");
+        var snapshot=new Wpbd.TokenSnapshot{Available=false,IsElevated=false,IntegrityRid=0x2000};
+        Check(!snapshot.UnprivilegedDesktop,"Partial token proof enabled the desktop.");
+        snapshot.Available=true;Check(snapshot.UnprivilegedDesktop,"Unprivileged desktop rejected.");
+        snapshot.IsElevated=true;Check(!snapshot.UnprivilegedDesktop,"Elevated desktop accepted.");
+        snapshot.IsElevated=false;snapshot.IntegrityRid=0x3000;Check(!snapshot.UnprivilegedDesktop,"High-integrity desktop accepted.");
+        return Task.CompletedTask;
+    }),
+    ("0.6.2 report mode cannot claim UAC success from a forged verified flag", async () =>
+    {
+        var node=JsonNode.Parse(Fixture("0.3"))!;
+        node["Permissions"]=JsonNode.Parse("""{"RequestedMode":"Elevated","ElevationOutcome":"Succeeded","TokenInspectionStatus":"Available","ActualWorkerIsElevated":false,"AdministratorGroupPresent":true,"AdministratorGroupEnabled":true,"IntegrityRid":12288,"VerifiedHighIntegrityAdministrator":true,"Coverage":{}}""");
+        await File.WriteAllTextAsync(valid,node.ToJsonString());var report=await DiagnosticData.LoadAsync(valid);
+        Check(report.Permissions!.Display.Summary.Contains("Not verified") && !report.Permissions.Display.Mode.Contains("elevated worker token recorded"),"A failed elevation was displayed as successful.");
+        node["Permissions"]!["ActualWorkerIsElevated"]=true;node["Permissions"]!["IntegrityRid"]=12288.5;
+        await File.WriteAllTextAsync(valid,node.ToJsonString());
+        Check(!(await DiagnosticData.LoadAsync(valid)).Permissions!.Display.Mode.Contains("elevated worker token recorded"),"Fractional integrity accepted.");
+        foreach(var schema in new[]{"0.1","0.2","0.3"}){await File.WriteAllTextAsync(valid,Fixture(schema));Check((await DiagnosticData.LoadAsync(valid)).Permissions is null,"Historical permission evidence was fabricated.");}
+    }),
+    ("0.6.2 history reads bounded mode headers and preserves old report labels", async () =>
+    {
+        var history=Path.Combine(temporary,"WPBD-mode-header.json");
+        var header="""{"Permissions":{"RequestedMode":"Standard","ElevationOutcome":"NotRequested","TokenInspectionStatus":"Available","ActualWorkerIsElevated":false},"Samples":[""";
+        await File.WriteAllTextAsync(history,header+new string(' ',1024*1024)+"]}");
+        Check(ReportPaths.ReadDiagnosticMode(history)=="Standard / worker not elevated","History mode was lost in a large report.");
+        await File.WriteAllTextAsync(history,"{\"Samples\":[],\"Permissions\":{\"RequestedMode\":\"Standard\"}}");
+        Check(ReportPaths.ReadDiagnosticMode(history)=="Not recorded","History guessed from unbounded trailing data.");
+        await File.WriteAllTextAsync(history,"{invalid");Check(ReportPaths.ReadDiagnosticMode(history)=="Unavailable","Malformed history header was accepted.");
+    }),
     ("0.6.1 units preserve nulls, zeroes and sensible precision", () =>
     {
         Check(InsightPresenter.Value(1790373888, "bytes") == "1.67 GiB" && InsightPresenter.Value(663*1048576d,"bytes") == "663 MiB", "Memory units differ.");
@@ -321,6 +371,16 @@ static async Task LiveAsync(string engine, string directory, bool overridePolicy
             Check(html.Contains(System.Net.WebUtility.HtmlEncode(insight.Id == "operation.normal" ? report.Assessment : insight.Display.Observation)), "Live HTML and desktop insight text differ.");
         Console.WriteLine($"LIVE timing: sample average {written.RootElement.GetProperty("CollectionTiming").GetProperty("SampleWorkSeconds").GetProperty("Average")}; insight seconds {written.RootElement.GetProperty("CollectionTiming").GetProperty("InsightAnalysisSeconds")}");
     }
+    Check(report.Permissions is { } permission && permission.Display.Mode=="Standard / worker not elevated", "Actual Standard worker status was not recorded.");
+    using(var identity=System.Security.Principal.WindowsIdentity.GetCurrent()){
+        var owner=new FileInfo(report.JsonPath).GetAccessControl().GetOwner(typeof(System.Security.Principal.SecurityIdentifier));
+        Check(owner.Equals(identity.User),"The report was not owned by the original user.");
+    }
+    var permissionHtml=await File.ReadAllTextAsync(report.HtmlPath!);
+    Check(permissionHtml.Contains(System.Net.WebUtility.HtmlEncode(report.Permissions!.Display.Summary)) &&
+        permissionHtml.Contains(System.Net.WebUtility.HtmlEncode(report.Permissions.Display.TokenSummary)),"WPF/HTML permission metadata differs.");
+        foreach(var metric in report.Permissions.Display.Coverage)Check(permissionHtml.Contains($"<td>{System.Net.WebUtility.HtmlEncode(metric.Measurement)}</td><td>{System.Net.WebUtility.HtmlEncode(metric.Value)}</td>"),"Coverage labels or values differ.");
+    Console.WriteLine("PASS actual unprivileged Standard worker, permission reporting and original-user report ownership");
     Console.WriteLine($"PASS real Windows collection and paired reports ({report.Quality.Actual}/{report.Quality.Expected} samples)");
 
     using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(30));

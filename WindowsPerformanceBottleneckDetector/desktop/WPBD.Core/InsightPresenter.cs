@@ -23,6 +23,7 @@ public static class InsightPresenter
         using var document = JsonDocument.Parse(stream);
         return document.RootElement.Clone();
     }
+    internal static IEnumerable<(string Key,string Label,string Unit)> PermissionFields => Get(Spec,"PermissionFields").EnumerateObject().Select(p => (p.Name,Text(p.Value,"Label")!,Text(p.Value,"Unit")!));
     public static string Value(double? value, string unit = "count")
     {
         if (value is not double v || !double.IsFinite(v)) return "Unavailable";
