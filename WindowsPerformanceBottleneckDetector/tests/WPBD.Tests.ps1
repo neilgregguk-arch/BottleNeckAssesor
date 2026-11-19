@@ -790,16 +790,18 @@ Describe 'WPBD diagnostic engine' {
             $c.Usage.Maximum | Should Be 1100MB
             $c.ProcessIdentities.Count | Should Be 2
         }
-        It 'renders exactly the recorded insight text and escapes HTML' {
+        It 'renders structured recorded insight evidence and escapes HTML without raw detail JSON' {
             $r=Get-WpbdAnalysis (New-TestMetrics -Cpu -Paging -Disk)
             $paths=Export-WpbdReport $r $TestDrive
             $j=Get-Content $paths.JsonPath -Raw | ConvertFrom-Json
             $h=Get-Content $paths.HtmlPath -Raw
             foreach($i in $j.DiagnosticInsights){
-                $h.Contains([Net.WebUtility]::HtmlEncode($i.DetailText)) | Should Be $true
+                $p=& (Get-Module WPBD) {param($x) Get-WpbdInsightPresentation $x} $i
+                $h.Contains([Net.WebUtility]::HtmlEncode($p.Observation)) | Should Be $true
+                $h.Contains([Net.WebUtility]::HtmlEncode($i.DetailText)) | Should Be $false
                 $h.Contains([Net.WebUtility]::HtmlEncode($i.Title)) | Should Be $true
             }
-            $h | Should Match 'Application 0.6.0'
+            $h | Should Match 'Application 0.6.1'
             $h | Should Not Match 'Version 0.2|worker<script>'
         }
         It 'does not invent historical insights when exporting an older report' {
@@ -815,6 +817,132 @@ Describe 'WPBD diagnostic engine' {
             $a=(Get-WpbdAnalysis $m).DiagnosticInsights | ConvertTo-Json -Depth 16
             $b=(Get-WpbdAnalysis $m).DiagnosticInsights | ConvertTo-Json -Depth 16
             $a | Should Be $b
+        }
+    }
+
+    Context '0.6.1 presentation formatting and grouping' {
+        It 'formats memory in GiB and MiB without changing values' {
+            & (Get-Module WPBD) { Format-WpbdDisplayValue 1790373888 bytes } | Should Be '1.67 GiB'
+            & (Get-Module WPBD) { Format-WpbdDisplayValue 1520488448 bytes } | Should Be '1.42 GiB'
+            & (Get-Module WPBD) { Format-WpbdDisplayValue 663MB bytes } | Should Be '663 MiB'
+        }
+        It 'formats utilisation latency paging throughput and unavailable values consistently' {
+            & (Get-Module WPBD) { Format-WpbdDisplayValue 90.7432911177168 percent } | Should Be '90.7%'
+            & (Get-Module WPBD) { Format-WpbdDisplayValue 22.25 percent } | Should Be '22.3%'
+            & (Get-Module WPBD) { Format-WpbdDisplayValue 0.005 ms } | Should Be '0.01 ms'
+            & (Get-Module WPBD) { Format-WpbdDisplayValue 0.450677637 ms } | Should Be '0.45 ms'
+            & (Get-Module WPBD) { Format-WpbdDisplayValue 1MB 'bytes/s' } | Should Be '1 MiB/s'
+            & (Get-Module WPBD) { Format-WpbdDisplayValue 40 'reads/s' } | Should Be '40 reads/s'
+            & (Get-Module WPBD) { Format-WpbdDisplayValue $null bytes } | Should Be 'Unavailable'
+            & (Get-Module WPBD) { Format-WpbdDisplayValue 0 percent } | Should Be '0.0%'
+        }
+        It 'uses human labels and retains unavailable paging evidence' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Paging)
+            $i=$r.DiagnosticInsights | Where-Object Id -eq 'memory.pressure'
+            $p=& (Get-Module WPBD) {param($x) Get-WpbdInsightPresentation $x} $i
+            ($p.Measurements | Where-Object Key -eq 'AvailableBytes').Minimum | Should Be '256 MiB'
+            ($p.Measurements | Where-Object Key -eq 'PagesOutputPerSecond').Average | Should Be 'Unavailable'
+            $p.Observation | Should Match '96.9%'
+            $i.SupportingEvidence.AvailableBytes.Minimum | Should Be 256MB
+        }
+        It 'preserves contributor ranking limits the initial view and keeps full member identities' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Cpu)
+            $i=$r.DiagnosticInsights | Where-Object Id -eq 'cpu.sustained'
+            $c=$i.PotentialContributors[0]
+            $i.PotentialContributors=@(foreach($n in 1..7){$clone=$c | ConvertTo-Json -Depth 10 | ConvertFrom-Json;$clone.Name="Candidate $n";$clone})
+            $p=& (Get-Module WPBD) {param($x) Get-WpbdInsightPresentation $x} $i
+            $p.Contributors.Count | Should Be 5
+            $p.AllContributors.Count | Should Be 7
+            $p.Contributors[0].Name | Should Be 'Candidate 1'
+            $p.Contributors[4].Name | Should Be 'Candidate 5'
+            $p.AllContributors[6].Details | Should Match 'identity:'
+            $p.Contributors[0].Attribution | Should Be 'Ownership unresolved'
+            $p.Contributors[0].Kind | Should Be 'Individual process'
+        }
+        It 'shows identified application ownership separately from unresolved processes' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Cpu)
+            $c=($r.DiagnosticInsights | Where-Object Id -eq 'cpu.sustained').PotentialContributors[0]
+            $c.ApplicationKey='application/example';$c.AttributionConfidence='Medium'
+            $p=& (Get-Module WPBD) {param($x) Get-WpbdContributorPresentation $x} $c
+            $p.Kind | Should Be 'Application group'
+            $p.Attribution | Should Be 'Ownership evidence: Medium confidence'
+            $c.ApplicationKey='service/example'
+            (& (Get-Module WPBD) {param($x) Get-WpbdContributorPresentation $x} $c).Kind | Should Be 'Process group'
+        }
+        It 'limits initial steps without reordering or discarding recorded recommendations' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Cpu);$i=$r.DiagnosticInsights[0]
+            $i.SuggestedInvestigation=@('First','Second','Third','Fourth')
+            $p=& (Get-Module WPBD) {param($x) Get-WpbdInsightPresentation $x} $i
+            $p.Steps.Count | Should Be 3
+            $p.Steps[0] | Should Be '1. First'
+            $p.AllSteps[3] | Should Be '4. Fourth'
+        }
+        It 'groups advisory-only reports without duplicating normal cards or memory advisories' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -HighMemory)
+            $paths=Export-WpbdReport $r $TestDrive;$h=Get-Content $paths.HtmlPath -Raw
+            $h | Should Match 'No clear bottleneck detected. Elevated memory utilisation.'
+            ([regex]::Matches($h,'<h3>Elevated memory utilisation</h3>')).Count | Should Be 1
+            $h | Should Not Match '<h3>No clear bottleneck detected</h3>|<h2>Advisories</h2>'
+            $r.DiagnosticInsights.Count | Should Be 2
+            $r.Advisories.Count | Should Be 1
+        }
+        It 'keeps normal operation short with the original detailed resource sections available' {
+            $paths=Export-WpbdReport (Get-WpbdAnalysis (New-TestMetrics)) $TestDrive
+            $h=Get-Content $paths.HtmlPath -Raw
+            $h | Should Not Match '<article class="finding insight">|<h2>Diagnostic Insights</h2>'
+            $h | Should Match '0 significant findings; 0 advisories|<h2>CPU</h2>|<h2>Memory</h2>'
+        }
+        It 'counts original significant findings and advisories without adding context as problems' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Cpu -Paging -Disk -LowSpace)
+            $p=& (Get-Module WPBD) {param($x) Get-WpbdOverview $x} $r
+            $p.Counts | Should Be '4 significant findings; 0 advisories.'
+            $p.Focus | Should Match 'Severe memory pressure'
+        }
+        It 'retains incomplete evidence and does not format missing CPU as healthy zero' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Incomplete)
+            $paths=Export-WpbdReport $r $TestDrive;$h=Get-Content $paths.HtmlPath -Raw
+            $h | Should Match 'Insufficient diagnostic data|Unavailable'
+            $h | Should Not Match '<h3>No clear bottleneck detected</h3>'
+            $r.Statistics.Cpu.Average | Should BeNullOrEmpty
+        }
+        It 'encodes names references and process identities inside semantic tables and details' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Cpu)
+            $r.DiagnosticInsights[0].PotentialContributors[0].Name='<script>alert(1)</script>'
+            $r.DiagnosticInsights[0].MeasurementReferences=@('<img src=x onerror=alert(1)>')
+            $paths=Export-WpbdReport $r $TestDrive;$h=Get-Content $paths.HtmlPath -Raw
+            $h | Should Match '&lt;script&gt;alert|&lt;img'
+            $h | Should Not Match '<script|<img|<pre|"SupportingEvidence"|"AvailableBytes"\s*:'
+            $h | Should Match '<summary>Technical evidence|<ol>|scope=''col''|tabindex="0"'
+        }
+        It 'keeps historical findings when insights are absent' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Cpu -HighMemory)
+            $r.PSObject.Properties.Remove('DiagnosticInsights')
+            $paths=Export-WpbdReport $r $TestDrive;$h=Get-Content $paths.HtmlPath -Raw
+            $h | Should Match '<h2>Significant findings</h2>|<h2>Advisories</h2>'
+            $h | Should Not Match '<h2>Diagnostic Insights</h2>'
+        }
+        It 'displays application engine and schema versions independently' {
+            $paths=Export-WpbdReport (Get-WpbdAnalysis (New-TestMetrics)) $TestDrive
+            $h=Get-Content $paths.HtmlPath -Raw
+            $h | Should Match 'Application 0.6.1 &middot; Engine 0.6.0 &middot; Schema 0.3'
+        }
+        It 'preserves full precision and the original structured insight payload during export' {
+            $r=Get-WpbdAnalysis (New-TestMetrics -Paging);$i=$r.DiagnosticInsights[0]
+            $i.SupportingEvidence.UsedPercent.Average=90.7432911177168
+            $before=$i | ConvertTo-Json -Depth 16 -Compress
+            $paths=Export-WpbdReport $r $TestDrive
+            ($i | ConvertTo-Json -Depth 16 -Compress) | Should Be $before
+            $j=Get-Content $paths.JsonPath -Raw | ConvertFrom-Json
+            $j.DiagnosticInsights[0].SupportingEvidence.UsedPercent.Average | Should Be 90.7432911177168
+        }
+        It 'renders a large captured timeline without embedding raw insight JSON' {
+            $m=New-TestMetrics -Cpu
+            $m.Samples=@(foreach($n in 1..100){foreach($s in $m.Samples){$s}})
+            $m.Configuration.ExpectedSamples=500
+            $r=Get-WpbdAnalysis $m
+            $paths=Export-WpbdReport $r $TestDrive
+            $r.Samples.Count | Should Be 500
+            (Get-Content $paths.HtmlPath -Raw) | Should Not Match '"SupportingEvidence"|"Average"\s*:'
         }
     }
 
@@ -855,7 +983,8 @@ Describe 'WPBD diagnostic engine' {
             $report = Get-WpbdAnalysis $metrics
             $paths = Export-WpbdReport $report $TestDrive
             $html = Get-Content -LiteralPath $paths.HtmlPath -Raw
-            $html | Should Match '<h2>Advisories</h2>\s*<article[^>]*><h3>Elevated memory utilisation</h3>'
+            $html | Should Match '<h3>Elevated memory utilisation</h3>'
+            ([regex]::Matches($html,'<h3>Elevated memory utilisation</h3>')).Count | Should Be 1
             $html | Should Match 'Disk&lt;&amp;&gt; \(read'
             $html | Should Not Match 'Severe memory pressure|Disk<&>'
         }

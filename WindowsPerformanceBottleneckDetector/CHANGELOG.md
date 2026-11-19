@@ -1,6 +1,15 @@
 # Changelog
 
-## 0.6.0 � 2026-11-19
+## 0.6.1 — 2026-11-19
+
+- Added a compact diagnostic overview and grouped matching insights, findings and advisories without removing original report data.
+- Replaced raw DetailText/JSON rendering with readable measurements, contributor tables, ordered investigations and expandable technical evidence in WPF and offline HTML.
+- Added a shared field-label/unit specification and cross-runtime presentation parity fixtures. Retained all diagnostic classifications, contributor rankings, same-sample aggregation and schema 0.3.
+- Added mobile table scrolling, semantic/keyboard-accessible HTML and print styles; preserved the All Processes bottom scrollbar.
+- Kept engine version 0.6.0, updated the application/installer to 0.6.1, and added formatting, grouping, null handling, compatibility and large-report regressions.
+
+
+## 0.6.0 — 2026-11-19
 
 - Kept the All Processes horizontal scrollbar visible at the bottom and gave executable paths a fixed width so wide results remain readable.
 

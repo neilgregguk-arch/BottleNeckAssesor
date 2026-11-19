@@ -12,7 +12,7 @@ function Format-WpbdNumber {
 function New-WpbdHtmlTable {
     param([string[]] $Headers, $Rows)
     $html = New-Object Text.StringBuilder
-    [void] $html.Append('<div class="table-wrap"><table><thead><tr>')
+    [void] $html.Append('<div class="table-wrap" tabindex="0" role="region" aria-label="Scrollable measurements"><table><thead><tr>')
     foreach ($header in $Headers) { [void] $html.Append("<th scope='col'>$(ConvertTo-WpbdHtmlText $header)</th>") }
     [void] $html.Append('</tr></thead><tbody>')
     foreach ($row in $Rows) {
@@ -55,10 +55,11 @@ function New-WpbdHtmlFindings {
 
 function ConvertTo-WpbdHtmlReport {
     param($Diagnostic)
-    $insights = @(foreach ($insight in $Diagnostic.DiagnosticInsights) {
-        "<article class='finding'><h3>$(ConvertTo-WpbdHtmlText $insight.Title)</h3><p>Priority: $(ConvertTo-WpbdHtmlText $insight.Priority) &middot; Severity: $(ConvertTo-WpbdHtmlText $insight.Severity) &middot; Confidence: $(ConvertTo-WpbdHtmlText $insight.Confidence)</p><p>$(ConvertTo-WpbdHtmlText $insight.Observation)</p><details><summary>Evidence, contributors and next steps</summary><div style='white-space:pre-wrap;overflow-wrap:anywhere'>$(ConvertTo-WpbdHtmlText $insight.DetailText)</div></details></article>"
-    })
-    $insightsSection = if ($insights.Count) { "<section><h2>Diagnostic Insights</h2><p>Priority is investigation usefulness and urgency; severity describes the observed condition; confidence describes evidence strength.</p>$($insights -join "`n")</section>" }
+    $insights = @($Diagnostic.DiagnosticInsights | Where-Object { $_.Id -ne 'operation.normal' -and $null -ne $_ } | ForEach-Object { New-WpbdHtmlInsight $_ $Diagnostic })
+    $insightsSection = if ($insights.Count) { "<section><h2>Diagnostic Insights</h2><p>Priority: investigation usefulness and urgency. Severity: observed condition. Confidence: evidence strength.</p>$($insights -join "`n")</section>" }
+    $overview = Get-WpbdOverview $Diagnostic
+    $overviewText = '<p class="assessment">' + (ConvertTo-WpbdHtmlText $overview.Summary) + '</p><p>' + (ConvertTo-WpbdHtmlText $overview.Focus) + '</p><p>' + (ConvertTo-WpbdHtmlText $overview.Counts) + '</p><p>' + (ConvertTo-WpbdHtmlText $overview.Sampling) + '</p>'
+    $represented = @($Diagnostic.DiagnosticInsights | ForEach-Object { $_.RelatedFindingCategory })
     $release = if ($Diagnostic.ApplicationVersion) { ConvertTo-WpbdHtmlText $Diagnostic.ApplicationVersion } else { 'not recorded' }
     $engine = if ($Diagnostic.EngineVersion) { ConvertTo-WpbdHtmlText $Diagnostic.EngineVersion } else { 'not recorded' }
     $schema = ConvertTo-WpbdHtmlText $Diagnostic.SchemaVersion
@@ -129,12 +130,12 @@ function ConvertTo-WpbdHtmlReport {
     }
     $systemTable = New-WpbdHtmlTable @('System information', 'Value') $systemRows
     $findings = New-WpbdHtmlFindings ($Diagnostic.Findings | Where-Object {
-        $_.Category -notin @('No clear bottleneck detected', 'Insufficient diagnostic data')
+        $_.Category -notin @('No clear bottleneck detected', 'Insufficient diagnostic data') -and $_.Category -notin $represented
     })
-    if (-not $findings) { $findings = '<p>No significant findings met the diagnostic rules.</p>' }
-    $advisories = New-WpbdHtmlFindings $Diagnostic.Advisories
-    if (-not $advisories) { $advisories = '<p>No advisories recorded.</p>' }
-    $insufficient = New-WpbdHtmlFindings ($Diagnostic.Findings | Where-Object { $_.Category -eq 'Insufficient diagnostic data' })
+    $findingsSection = if ($findings) { '<section><h2>Significant findings</h2>' + ($findings -join '') + '</section>' }
+    $advisories = New-WpbdHtmlFindings @($Diagnostic.Advisories | Where-Object { $_.Category -notin $represented })
+    $advisoriesSection = if ($advisories) { '<section><h2>Advisories</h2>' + ($advisories -join '') + '</section>' }
+    $insufficient = New-WpbdHtmlFindings ($Diagnostic.Findings | Where-Object { $_.Category -eq 'Insufficient diagnostic data' -and $_.Category -notin $represented })
     $evidenceSection = if ($insufficient) { '<section><h2>Insufficient evidence</h2>' + ($insufficient -join '') + '</section>' }
     $normal = $Diagnostic.Findings | Where-Object { $_.Category -eq 'No clear bottleneck detected' }
     $repeatGuidance = if ($normal -and -not $Diagnostic.Advisories.Count) {
@@ -304,10 +305,11 @@ h1,h2,h3,p{margin:0 0 .65rem} h1{font-size:clamp(1.5rem,4vw,2.25rem)}
 h2,h3{color:#193c58} h3{margin-top:1rem} .meta{color:#44596b}
 .assessment{font-size:1.2rem;font-weight:650} .finding{border-left:.25rem solid #277286;padding:.1rem 0 .1rem 1rem;margin:1rem 0}
 dl{margin:.5rem 0} dt{font-weight:650} dd{margin:0 0 .6rem}
-.table-wrap{overflow-x:auto;margin:.65rem 0 1rem} table{border-collapse:collapse;width:100%;font-size:.9rem}
+.table-wrap{overflow-x:auto;margin:.65rem 0 1rem} table{border-collapse:collapse;width:100%;min-width:36rem;font-size:.9rem}
 th,td{text-align:left;vertical-align:top;padding:.45rem .65rem;border-bottom:1px solid #d0dce5;overflow-wrap:anywhere}
 th{background:#e9f1f6} tbody tr:nth-child(even){background:#f5f8fa} summary{cursor:pointer;font-weight:650}
-@media print{body{padding:0;background:white} section,header{padding:.5rem;border:0} tr,.finding{break-inside:avoid}}
+.technical-text{white-space:pre-wrap;overflow-wrap:anywhere} h4,h5{margin:.75rem 0 .35rem} ol{padding-left:1.5rem} .insight .table-wrap{margin:.5rem 0 1rem} :focus-visible{outline:3px solid #277286;outline-offset:3px}
+@media print{table{min-width:0}details::details-content{content-visibility:visible!important} details:not([open])>:not(summary){display:block!important}body{padding:0;background:white} section,header{padding:.5rem;border:0} tr,.finding{break-inside:avoid}}
 </style>
 </head>
 <body>
@@ -315,14 +317,14 @@ th{background:#e9f1f6} tbody tr:nth-child(even){background:#f5f8fa} summary{curs
 <h1>Windows Performance Bottleneck Detector</h1>
 <p><strong>$computer</strong> &middot; Application $release &middot; Engine $engine &middot; Schema $schema</p>
 <p class="meta">$start to $end &middot; $duration s elapsed</p>
-<p class="assessment">$assessment</p>
-<p>$sampleCount of $expected scheduled samples collected &middot; $missed missed</p>
+$overviewText
+<p class="meta">A short diagnostic cannot rule out intermittent problems.</p>
 $repeatGuidance
 </header>
 <main>
 $insightsSection
-<section><h2>Significant findings</h2>$($findings -join "`n")</section>
-<section><h2>Advisories</h2>$($advisories -join "`n")</section>
+$findingsSection
+$advisoriesSection
 $evidenceSection
 <section><h2>Sampling quality</h2><p>The configured interval was $interval s. Sample collection and conversion averaged $averageWork s and peaked at $maxWork s. $slow samples exceeded the interval.</p>
 <p>The baseline took $baselineSeconds s. The maximum sample start delay was $maxDelay s.</p>

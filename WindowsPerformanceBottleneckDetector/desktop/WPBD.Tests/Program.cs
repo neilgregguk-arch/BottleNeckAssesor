@@ -7,6 +7,53 @@ var temporary = Directory.CreateTempSubdirectory("wpbd-tests-").FullName;
 var valid = Path.Combine(temporary, "WPBD-test.json");
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("0.6.1 units preserve nulls, zeroes and sensible precision", () =>
+    {
+        Check(InsightPresenter.Value(1790373888, "bytes") == "1.67 GiB" && InsightPresenter.Value(663*1048576d,"bytes") == "663 MiB", "Memory units differ.");
+        Check(InsightPresenter.Value(90.7432911177168,"percent") == "90.7%" && InsightPresenter.Value(0,"percent") == "0.0%", "Percent formatting differs.");
+        Check(InsightPresenter.Value(22.25,"percent")=="22.3%" && InsightPresenter.Value(0.005,"ms")=="0.01 ms", "Framework midpoint rounding differs.");
+        Check(InsightPresenter.Value(0.450677637,"ms") == "0.45 ms" && InsightPresenter.Value(1048576,"bytes/s") == "1 MiB/s", "Disk units differ.");
+        Check(InsightPresenter.Value(40,"reads/s") == "40 reads/s" && InsightPresenter.Value(null,"bytes") == "Unavailable" && InsightPresenter.Value(double.NaN) == "Unavailable", "Unavailable evidence was lost.");
+        return Task.CompletedTask;
+    }),
+    ("0.6.1 contributors preserve rank, accounting and all expanded details", () =>
+    {
+        var insight = JsonNode.Parse(PresentationFixture())!;
+        var rows = insight["PotentialContributors"]!.AsArray();
+        for (var n = 1; n < 7; n++) { var c=rows[0]!.DeepClone(); c["Name"]=$"Candidate {n}"; rows.Add(c); }
+        using var json = JsonDocument.Parse(insight.ToJsonString());
+        var p=InsightPresenter.Create(json.RootElement);
+        Check(p.Contributors.Count==5 && p.AllContributors.Count==7 && p.Contributors[0].Name=="Example" && p.AllContributors[6].Name=="Candidate 6", "Contributor ranking or expansion changed.");
+        Check(p.Contributors[0].Usage.Contains("1.67 GiB") && p.Contributors[0].Usage.Contains("private allocation") && p.Contributors[0].Attribution=="Ownership unresolved" && p.Contributors[0].Kind=="Individual process", "Ownership or memory accounting was inferred.");
+        Check(p.AllContributors[0].Details.Contains("identity: key21") && p.Steps.Count==3 && p.AllSteps[3]=="4. Fourth", "Full evidence or step order was lost.");
+        Check(p.Observation.Contains("90.7%") && p.Measurements.Single(m=>m.Key=="PagesOutputPerSecond").Average=="Unavailable", "Memory presentation lost precision or nulls.");
+        return Task.CompletedTask;
+    }),
+    ("0.6.1 grouping retains original findings, metadata and version identifiers", async () =>
+    {
+        var document=JsonNode.Parse(Fixture("0.3"))!;
+        document["ApplicationVersion"]="0.6.1";document["EngineVersion"]="0.6.0";
+        document["DiagnosticInsights"]=new JsonArray(JsonNode.Parse(PresentationFixture()));
+        document["Statistics"]!["Processes"]!["All"]=new JsonArray(new JsonObject {
+            ["Id"]=21,["Name"]="Example",["InstanceKey"]="key21",["OwnershipEvidence"]="No matching executable evidence",
+            ["AttributionCategory"]="Unknown process ownership",["AttributionConfidence"]="Low" });
+        await File.WriteAllTextAsync(valid,document.ToJsonString());var report=await DiagnosticData.LoadAsync(valid);
+        Check(report.Findings.Count==2 && InsightPresenter.UnrepresentedFindings(report).Count==1, "Underlying findings were removed or duplicates remain.");
+        Check(report.Insights![0].TechnicalOwnership.Contains("No matching executable evidence"), "Attribution evidence was hidden.");
+        Check(report is { ApplicationVersion:"0.6.1",EngineVersion:"0.6.0",Schema:"0.3" }, "Version identifiers were conflated.");
+        var overview=InsightPresenter.Overview(report);
+        Check(overview.Counts=="1 significant finding; 1 advisory." && overview.Summary.Contains("Elevated memory utilisation") && overview.Sampling.Contains("1 of 2"), "Advisory or incomplete sampling vanished from overview.");
+    }),
+    ("0.6.1 large reports cache formatted projections without cloning raw measurements twice", async () =>
+    {
+        var document=JsonNode.Parse(Fixture("0.3"))!;var insights=new JsonArray();
+        for(var n=0;n<300;n++){var item=JsonNode.Parse(PresentationFixture())!;item["Id"]=$"synthetic/{n}";insights.Add(item);}
+        document["DiagnosticInsights"]=insights;
+        await File.WriteAllTextAsync(valid,document.ToJsonString());var timer=System.Diagnostics.Stopwatch.StartNew();
+        var report=await DiagnosticData.LoadAsync(valid);timer.Stop();
+        Check(report.Insights!.Count==300 && ReferenceEquals(report.Insights[0].Display,report.Insights[0].Display), "Projection was missing or rerun on access.");
+        Console.WriteLine($"INFO 300-insight report loaded in {timer.Elapsed.TotalMilliseconds:0.0} ms");
+    }),
     ("0.6 insights preserve structured evidence, nulls and historical absence", async () =>
     {
         var document = JsonNode.Parse(Fixture("0.3"))!;
@@ -209,6 +256,28 @@ foreach (var test in tests)
 }
 Console.WriteLine($"{tests.Length} .NET checks passed.");
 
+if (args.Length == 2 && args[0] == "--presentation-fixtures")
+{
+    var checkedCount=0;
+    foreach(var expectedPath in Directory.GetFiles(args[1], "*.presentation.json"))
+    {
+        var reportPath=expectedPath.Replace(".presentation.json", ".json");
+        var report=await DiagnosticData.LoadAsync(reportPath);
+        var expected=JsonNode.Parse(await File.ReadAllTextAsync(expectedPath))!;
+        var actual=JsonSerializer.SerializeToNode(new {
+            Overview=InsightPresenter.Overview(report),
+            Insights=report.Insights!.Select(i=>new { i.Id, Display=i.Display }).ToArray()
+        });
+        if(!JsonNode.DeepEquals(expected,actual)) {
+            await File.WriteAllTextAsync(expectedPath+".actual",actual!.ToJsonString(new JsonSerializerOptions{WriteIndented=true}));
+            throw new Exception("PowerShell/WPF presentation mismatch: " + expectedPath);
+        }
+        checkedCount++;
+    }
+    Check(checkedCount>=5,"Expected representative presentation fixtures.");
+    Console.WriteLine($"PASS PowerShell/HTML and .NET/WPF presentation parity ({checkedCount} fixtures)");
+}
+
 if (OperatingSystem.IsWindows())
 {
     await MissingEngineAsync(temporary);
@@ -249,7 +318,7 @@ static async Task LiveAsync(string engine, string directory, bool overridePolicy
     using (var written = JsonDocument.Parse(await File.ReadAllTextAsync(report.JsonPath))) {
         var html = await File.ReadAllTextAsync(report.HtmlPath!);
         foreach (var insight in report.Insights!)
-            Check(html.Contains(System.Net.WebUtility.HtmlEncode(insight.DetailText)), "Live HTML and desktop insight text differ.");
+            Check(html.Contains(System.Net.WebUtility.HtmlEncode(insight.Id == "operation.normal" ? report.Assessment : insight.Display.Observation)), "Live HTML and desktop insight text differ.");
         Console.WriteLine($"LIVE timing: sample average {written.RootElement.GetProperty("CollectionTiming").GetProperty("SampleWorkSeconds").GetProperty("Average")}; insight seconds {written.RootElement.GetProperty("CollectionTiming").GetProperty("InsightAnalysisSeconds")}");
     }
     Console.WriteLine($"PASS real Windows collection and paired reports ({report.Quality.Actual}/{report.Quality.Expected} samples)");
@@ -268,6 +337,21 @@ static async Task LiveAsync(string engine, string directory, bool overridePolicy
     Check(sawSample && !Directory.Exists(partialDirectory), "Cancellation did not stop a live run before report export.");
     Console.WriteLine("PASS cancellation after a real sample, with no partial reports exported");
 }
+
+static string PresentationFixture() => """
+    { "Id":"memory.pressure", "Title":"Severe memory pressure", "Category":"Memory pressure", "RelatedFindingCategory":"Memory pressure",
+      "Priority":"Medium", "Severity":"Critical", "Confidence":"Medium", "Observation":"Recorded observation", "Interpretation":"Recorded interpretation",
+      "SupportingEvidence":{"UsedPercent":{"Count":5,"Average":90.7432911177168,"Minimum":90.6,"Maximum":91},
+        "AvailableBytes":{"Count":5,"Average":1556925644.8,"Minimum":1520488448,"Maximum":1577058304},
+        "PagesOutputPerSecond":{"Count":0,"Average":null,"Minimum":null,"Maximum":null}},
+      "PotentialContributors":[{"Name":"Example","ApplicationKey":null,"Resource":"PrivateBytes",
+        "Usage":{"Count":5,"Average":1790373888,"Minimum":1700000000,"Maximum":1790373888},
+        "WorkingSetBytes":{"Count":0,"Average":null,"Maximum":null}, "AttributionConfidence":"Low",
+        "MeasurementCoverage":{"ValidSamples":5,"SelectedSamples":5},
+        "ProcessIdentities":[{"Name":"Example","Id":21,"InstanceKey":"key21","IdentityStatus":"Provisional"}],"SampleSlots":[1,2,3,4,5]}],
+      "SuggestedInvestigation":["First","Second","Third","Fourth"],"DataLimitations":["Recorded limitations"],
+      "SampleSlots":[1,2,3,4,5],"MeasurementReferences":["Statistics.Memory"] }
+    """;
 
 static string Fixture(string schema) => """
     {

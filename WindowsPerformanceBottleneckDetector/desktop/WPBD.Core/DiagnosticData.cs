@@ -56,12 +56,16 @@ public sealed record SamplingQuality(int Expected, int Actual, int ValidCpu, int
     IReadOnlyList<string> Errors, double? AverageWorkSeconds, double? PeakWorkSeconds);
 
 public sealed record DiagnosticInsight(string Id, string Title, string Category, string Priority, string Severity,
-    string Confidence, string Observation, string DetailText, JsonElement Evidence);
+    string Confidence, string Observation, string DetailText, JsonElement Evidence)
+{
+    public InsightDisplay Display { get; } = InsightPresenter.Create(Evidence);
+    public string TechnicalOwnership { get; internal set; } = "";
+}
 
 public sealed record DiagnosticReport(string Schema, string Computer, DateTimeOffset Started, string Assessment,
     bool Incomplete, IReadOnlyList<string> CoverageGaps, IReadOnlyList<Sample> Samples, IReadOnlyList<Finding> Findings,
     IReadOnlyList<ProcessReading> Processes, SamplingQuality Quality, string JsonPath, string? HtmlPath,
-    IReadOnlyList<ApplicationReading>? Applications = null, AttributionQuality? Attribution = null, IReadOnlyList<DiagnosticInsight>? Insights = null);
+    IReadOnlyList<ApplicationReading>? Applications = null, AttributionQuality? Attribution = null, IReadOnlyList<DiagnosticInsight>? Insights = null, string? ApplicationVersion = null, string? EngineVersion = null);
 
 public sealed record EngineProgress(string Phase, Sample? Sample = null, int Collected = 0, int Expected = 0);
 
@@ -104,7 +108,7 @@ public static class DiagnosticData
             quality.Field("ValidSamples").Int("CpuTotal") ?? samples.Count(sample => sample.CpuPercent.HasValue),
             quality.Int("MissedSampleCount") ?? expected - actual, duration, errors, timing.Number("Average"), timing.Number("Maximum"));
         var html = Path.ChangeExtension(path, ".html");
-        return new DiagnosticReport(schema, RequiredText(root.Field("System"), "ComputerName"),
+        var report = new DiagnosticReport(schema, RequiredText(root.Field("System"), "ComputerName"),
             Timestamp(root, "StartedUtc"), RequiredText(assessment, "Summary"),
             category == "Insufficient diagnostic data" || gaps.Length > 0 || actual == 0, gaps, samples, findings,
             ParseAllProcesses(root), settings, path,
@@ -112,7 +116,10 @@ public static class DiagnosticData
             root.Field("DiagnosticInsights").Items().Select(item => new DiagnosticInsight(
                 RequiredText(item, "Id"), RequiredText(item, "Title"), RequiredText(item, "Category"),
                 RequiredText(item, "Priority"), RequiredText(item, "Severity"), RequiredText(item, "Confidence"),
-                RequiredText(item, "Observation"), RequiredText(item, "DetailText"), item.Clone())).ToArray());
+                RequiredText(item, "Observation"), item.Text("DetailText") ?? "", item.Clone())).ToArray(),
+            root.Text("ApplicationVersion"), root.Text("EngineVersion"));
+        foreach (var insight in report.Insights!) insight.TechnicalOwnership = InsightPresenter.Ownership(insight, report.Processes);
+        return report;
     }
 
     public static EngineEvent ParseEvent(string line)

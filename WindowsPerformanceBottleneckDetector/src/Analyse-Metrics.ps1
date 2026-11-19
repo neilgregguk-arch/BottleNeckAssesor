@@ -437,7 +437,7 @@ function Get-WpbdAnalysis {
     $sampling = Get-WpbdSamplingSummary $Metrics $samples $expected $cpu $memory.Statistics
     $sampling.Timing | Add-Member -NotePropertyName AttributionAnalysisSeconds -NotePropertyValue $attributionWatch.Elapsed.TotalSeconds
     $diagnostic = [pscustomobject]@{
-        ApplicationVersion = '0.6.0'; EngineVersion = '0.6.0'
+        ApplicationVersion = '0.6.1'; EngineVersion = '0.6.0'
         SchemaVersion = '0.3'
         Configuration = $Metrics.Configuration; Thresholds = [pscustomobject] $thresholds; System = $Metrics.System
         StartedUtc = $Metrics.StartedUtc; CompletedUtc = $Metrics.CompletedUtc

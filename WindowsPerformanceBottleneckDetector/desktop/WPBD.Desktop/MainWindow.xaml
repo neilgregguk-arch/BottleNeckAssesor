@@ -167,34 +167,56 @@
             </TabItem>
             <TabItem Header="Findings">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer.Resources>
+                        <DataTemplate x:Key="InsightMeasurement">
+                            <Grid Margin="0,3"><Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Measurement}" TextWrapping="Wrap" Margin="0,0,7,0"/>
+                                <TextBlock Grid.Column="1" Text="{Binding Average}" TextWrapping="Wrap"/>
+                                <TextBlock Grid.Column="2" Text="{Binding Minimum}" TextWrapping="Wrap"/>
+                                <TextBlock Grid.Column="3" Text="{Binding Maximum}" TextWrapping="Wrap"/>
+                                <TextBlock Grid.Column="4" Text="{Binding Coverage}" TextWrapping="Wrap"/>
+                            </Grid>
+                        </DataTemplate>
+                        <DataTemplate x:Key="InsightContributor">
+                            <Grid Margin="0,5"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="2*"/><ColumnDefinition Width="1.5*"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,8,0"><TextBlock Text="{Binding Name}" TextWrapping="Wrap"/><TextBlock Text="{Binding Kind}" Style="{StaticResource MutedText}"/></StackPanel>
+                                <TextBlock Grid.Column="1" Text="{Binding Usage}" TextWrapping="Wrap" Margin="0,0,8,0"/>
+                                <StackPanel Grid.Column="2"><TextBlock Text="{Binding Attribution}" TextWrapping="Wrap"/><TextBlock Text="{Binding Coverage}" Style="{StaticResource MutedText}"/></StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ScrollViewer.Resources>
                     <StackPanel>
                         <Border Style="{StaticResource PanelSurface}" Margin="0,0,0,8">
                             <StackPanel>
-                                <TextBlock Text="{Binding Assessment}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding Overview.Summary, TargetNullValue='No completed assessment'}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding Overview.Focus}" TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                <TextBlock Text="{Binding Overview.Counts}" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding Overview.Sampling}" TextWrapping="Wrap"/>
+                                <TextBlock Text="A short diagnostic cannot rule out intermittent problems." Style="{StaticResource MutedText}" Margin="0,5,0,0"/>
                                 <TextBlock Text="{Binding ReportContext}" Style="{StaticResource MutedText}" Margin="0,5,0,0"/>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource PanelSurface}" Margin="0,0,0,8">
-                            <StackPanel>
-                                <TextBlock Text="Sampling quality" Style="{StaticResource Heading}"/>
-                                <TextBlock Text="{Binding QualitySummary}" TextWrapping="Wrap" Margin="0,4,0,0"/>
-                                <TextBlock Text="{Binding TimingSummary}" Style="{StaticResource MutedText}"/>
-                                <ItemsControl ItemsSource="{Binding CoverageGaps}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding StringFormat='Coverage gap · {0}'}" TextWrapping="Wrap" Foreground="{StaticResource Memory}" Margin="0,5,0,0"/>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <ItemsControl ItemsSource="{Binding CollectionErrors}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate><TextBlock Text="{Binding}" Style="{StaticResource MutedText}" Margin="0,5,0,0"/></DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
+                            <Expander Header="Sampling quality and collection details">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding QualitySummary}" TextWrapping="Wrap"/>
+                                    <TextBlock Text="{Binding TimingSummary}" Style="{StaticResource MutedText}"/>
+                                    <ItemsControl ItemsSource="{Binding CoverageGaps}"><ItemsControl.ItemTemplate><DataTemplate>
+                                        <TextBlock Text="{Binding StringFormat='Coverage gap · {0}'}" TextWrapping="Wrap" Foreground="{StaticResource Memory}" Margin="0,5,0,0"/>
+                                    </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+                                    <ItemsControl ItemsSource="{Binding CollectionErrors}"><ItemsControl.ItemTemplate><DataTemplate>
+                                        <TextBlock Text="{Binding}" Style="{StaticResource MutedText}"/>
+                                    </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+                                </StackPanel>
+                            </Expander>
                         </Border>
-                        <TextBlock Text="Diagnostic Insights" Style="{StaticResource Heading}" Margin="0,8,0,5"/>
-                        <TextBlock Text="Priority: investigation usefulness and urgency. Severity: observed condition. Confidence: evidence strength." Style="{StaticResource MutedText}" Margin="0,0,0,8"/>
+                        <StackPanel>
+                            <StackPanel.Style><Style TargetType="StackPanel"><Style.Triggers><DataTrigger Binding="{Binding Insights.Count}" Value="0"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></StackPanel.Style>
+                            <TextBlock Text="Diagnostic Insights" Style="{StaticResource Heading}" Margin="0,8,0,5"/>
+                            <TextBlock Text="Priority: investigation usefulness and urgency. Severity: observed condition. Confidence: evidence strength." Style="{StaticResource MutedText}" Margin="0,0,0,8"/>
+                        </StackPanel>
                         <ItemsControl ItemsSource="{Binding Insights}">
                             <ItemsControl.ItemTemplate><DataTemplate>
                                 <Border Style="{StaticResource PanelSurface}" Margin="0,0,0,8"><StackPanel>
@@ -204,9 +226,40 @@
                                         <TextBlock Text="{Binding Severity, StringFormat='Severity: {0}   '}"/>
                                         <TextBlock Text="{Binding Confidence, StringFormat='Confidence: {0}'}"/>
                                     </WrapPanel>
-                                    <TextBlock Text="{Binding Observation}" TextWrapping="Wrap" Margin="0,5,0,5"/>
-                                    <Expander Header="Evidence, contributors and next steps">
-                                        <TextBlock Text="{Binding DetailText}" TextWrapping="Wrap" Margin="5"/>
+                                    <TextBlock Text="{Binding Display.Observation}" TextWrapping="Wrap" Margin="0,8,0,5"/>
+                                    <TextBlock Text="{Binding Display.Interpretation}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <Grid Margin="0,4"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Supporting measurement" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                        <TextBlock Grid.Column="1" Text="Average / value" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                        <TextBlock Grid.Column="2" Text="Minimum" FontWeight="SemiBold"/>
+                                        <TextBlock Grid.Column="3" Text="Maximum" FontWeight="SemiBold"/>
+                                        <TextBlock Grid.Column="4" Text="Coverage" FontWeight="SemiBold"/>
+                                    </Grid>
+                                    <ItemsControl ItemsSource="{Binding Display.Measurements}" ItemTemplate="{StaticResource InsightMeasurement}"/>
+                                    <StackPanel>
+                                        <StackPanel.Style><Style TargetType="StackPanel"><Style.Triggers><DataTrigger Binding="{Binding Display.Contributors.Count}" Value="0"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></StackPanel.Style>
+                                        <TextBlock Text="Potential contributors" FontWeight="SemiBold" Margin="0,12,0,5"/>
+                                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="2*"/><ColumnDefinition Width="1.5*"/></Grid.ColumnDefinitions>
+                                            <TextBlock Text="Application / process" FontWeight="SemiBold"/><TextBlock Grid.Column="1" Text="Relevant measured usage" FontWeight="SemiBold" TextWrapping="Wrap"/><TextBlock Grid.Column="2" Text="Attribution / coverage" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                        </Grid>
+                                        <ItemsControl ItemsSource="{Binding Display.Contributors}" ItemTemplate="{StaticResource InsightContributor}"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Suggested investigation" FontWeight="SemiBold" Margin="0,12,0,4"/>
+                                    <ItemsControl ItemsSource="{Binding Display.Steps}"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,2"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+                                    <TextBlock Text="{Binding Display.Limitation}" Style="{StaticResource MutedText}" Margin="0,7,0,0"/>
+                                    <Expander Header="Technical evidence and full contributor details">
+                                        <StackPanel Margin="4">
+                                            <TextBlock Text="{Binding Display.TechnicalReferences}" TextWrapping="Wrap" Margin="0,4,0,7"/>
+                                            <ItemsControl ItemsSource="{Binding Display.TechnicalMeasurements}" ItemTemplate="{StaticResource InsightMeasurement}"/>
+                                            <ItemsControl ItemsSource="{Binding Display.AllContributors}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,9,0,0">
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap"/><TextBlock Text="{Binding Details}" TextWrapping="Wrap"/>
+                                            </StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+                                            <TextBlock Text="{Binding TechnicalOwnership}" TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                            <TextBlock Text="All recorded investigation steps" FontWeight="SemiBold" Margin="0,9,0,4"/>
+                                            <ItemsControl ItemsSource="{Binding Display.AllSteps}"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,2"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+                                            <TextBlock Text="Collection and interpretation limitations" FontWeight="SemiBold" Margin="0,9,0,4"/>
+                                            <TextBlock Text="{Binding Display.Limitations}" TextWrapping="Wrap"/>
+                                        </StackPanel>
                                     </Expander>
                                 </StackPanel></Border>
                             </DataTemplate></ItemsControl.ItemTemplate>

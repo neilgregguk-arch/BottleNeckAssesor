@@ -1,0 +1,184 @@
+{
+  "Fields": {
+    "UsedPercent": {
+      "Label": "Physical memory utilisation",
+      "Unit": "percent"
+    },
+    "AvailableBytes": {
+      "Label": "Available RAM",
+      "Unit": "bytes"
+    },
+    "AvailablePercent": {
+      "Label": "Available physical memory",
+      "Unit": "percent"
+    },
+    "CommitPercent": {
+      "Label": "Commit utilisation",
+      "Unit": "percent"
+    },
+    "CommittedBytes": {
+      "Label": "Committed memory",
+      "Unit": "bytes"
+    },
+    "CommitLimitBytes": {
+      "Label": "Commit limit",
+      "Unit": "bytes"
+    },
+    "PageReadsPerSecond": {
+      "Label": "Hard page reads",
+      "Unit": "reads/s"
+    },
+    "PagesInputPerSecond": {
+      "Label": "Pages input",
+      "Unit": "pages/s"
+    },
+    "PagesOutputPerSecond": {
+      "Label": "Pages output",
+      "Unit": "pages/s"
+    },
+    "FreeAndZeroPageListBytes": {
+      "Label": "Free and zero page list",
+      "Unit": "bytes"
+    },
+    "ModifiedPageListBytes": {
+      "Label": "Modified page list",
+      "Unit": "bytes"
+    },
+    "Utilisation": {
+      "Label": "Total CPU utilisation",
+      "Unit": "percent"
+    },
+    "Cpu": {
+      "Label": "Total CPU utilisation",
+      "Unit": "percent"
+    },
+    "CpuPercent": {
+      "Label": "CPU utilisation",
+      "Unit": "percent"
+    },
+    "ThresholdPercent": {
+      "Label": "Configured CPU threshold",
+      "Unit": "percent"
+    },
+    "QualifyingSamples": {
+      "Label": "Qualifying samples",
+      "Unit": "count"
+    },
+    "ReadLatencyMs": {
+      "Label": "Read latency",
+      "Unit": "ms"
+    },
+    "WriteLatencyMs": {
+      "Label": "Write latency",
+      "Unit": "ms"
+    },
+    "ReadsPerSecond": {
+      "Label": "Read operations",
+      "Unit": "ops/s"
+    },
+    "WritesPerSecond": {
+      "Label": "Write operations",
+      "Unit": "ops/s"
+    },
+    "ReadBytesPerSecond": {
+      "Label": "Read throughput",
+      "Unit": "bytes/s"
+    },
+    "WriteBytesPerSecond": {
+      "Label": "Write throughput",
+      "Unit": "bytes/s"
+    },
+    "ActivePercent": {
+      "Label": "Disk active time",
+      "Unit": "percent"
+    },
+    "QueueLength": {
+      "Label": "Disk queue length",
+      "Unit": "count"
+    },
+    "FreeBytes": {
+      "Label": "Free volume space",
+      "Unit": "bytes"
+    },
+    "CapacityBytes": {
+      "Label": "Volume capacity",
+      "Unit": "bytes"
+    },
+    "FreePercent": {
+      "Label": "Free volume space",
+      "Unit": "percent"
+    },
+    "WorkingSetBytes": {
+      "Label": "Working set",
+      "Unit": "bytes"
+    },
+    "PrivateBytes": {
+      "Label": "Private allocation",
+      "Unit": "bytes"
+    },
+    "OverlappingSampleCount": {
+      "Label": "Overlapping samples",
+      "Unit": "count"
+    },
+    "HighLatencySamples": {
+      "Label": "High-latency samples",
+      "Unit": "count"
+    },
+    "AssessableSamples": {
+      "Label": "Assessable samples",
+      "Unit": "count"
+    },
+    "ExpectedSamples": {
+      "Label": "Scheduled samples",
+      "Unit": "count"
+    },
+    "ActualSamples": {
+      "Label": "Collected samples",
+      "Unit": "count"
+    },
+    "MissedSampleCount": {
+      "Label": "Missed samples",
+      "Unit": "count"
+    }
+  },
+  "PrimaryFields": {
+    "Memory pressure": [
+      "UsedPercent",
+      "AvailableBytes",
+      "AvailablePercent",
+      "CommitPercent",
+      "PageReadsPerSecond",
+      "PagesInputPerSecond",
+      "PagesOutputPerSecond"
+    ],
+    "Elevated memory utilisation": [
+      "UsedPercent",
+      "AvailableBytes",
+      "AvailablePercent",
+      "CommitPercent",
+      "PageReadsPerSecond",
+      "PagesInputPerSecond",
+      "PagesOutputPerSecond"
+    ],
+    "CPU bottleneck": [
+      "Utilisation",
+      "ThresholdPercent",
+      "QualifyingSamples"
+    ],
+    "Disk I/O bottleneck": [
+      "ReadLatencyMs",
+      "WriteLatencyMs",
+      "ReadsPerSecond",
+      "WritesPerSecond",
+      "ReadBytesPerSecond",
+      "WriteBytesPerSecond",
+      "ActivePercent",
+      "QueueLength"
+    ],
+    "Low disk capacity": [
+      "FreePercent",
+      "FreeBytes",
+      "CapacityBytes"
+    ]
+  }
+}

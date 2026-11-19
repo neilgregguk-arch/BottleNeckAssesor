@@ -104,10 +104,11 @@ internal sealed class MainViewModel : INotifyPropertyChanged
     public int SelectedTab { get; set; }
     public string Assessment => _report?.Assessment ?? "No completed assessment";
     public string ReportContext => _report is { } report
-        ? $"{report.Computer} · {report.Started.ToLocalTime():g} · schema {report.Schema}"
+        ? $"{report.Computer} · {report.Started.ToLocalTime():g} · application {report.ApplicationVersion ?? "not recorded"} · engine {report.EngineVersion ?? "not recorded"} · schema {report.Schema}"
         : "Findings and process rankings are available after collection or when you open a saved report.";
-    public IReadOnlyList<DiagnosticInsight> Insights => _report?.Insights ?? [];
-    public IReadOnlyList<Finding> Findings => _report?.Findings ?? [];
+    public OverviewDisplay? Overview => _report is { } report ? InsightPresenter.Overview(report) : null;
+    public IReadOnlyList<DiagnosticInsight> Insights => (_report?.Insights ?? []).Where(i => i.Id != "operation.normal").ToArray();
+    public IReadOnlyList<Finding> Findings => _report is { } report ? InsightPresenter.UnrepresentedFindings(report) : [];
     private string _processSearch = "";
     private string _processFilter = "All captured";
     private ICollectionView _processes = CollectionViewSource.GetDefaultView(Array.Empty<ProcessReading>());
